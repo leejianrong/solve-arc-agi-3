@@ -1,0 +1,16 @@
+{
+  "provider": "openrouter",
+  "base_url": "https://openrouter.ai/api/v1",
+  "model": "qwen/qwen3.6-27b",
+  "api_key_env": "OPENROUTER_API_KEY",
+  "request_timeout_seconds": 120.0,
+  "context_limit": 32768,
+  "max_output_tokens": 4096,
+  "sampling": {
+    "temperature": 0.6,
+    "top_p": 0.95,
+    "top_k": 20,
+    "seed": 0,
+    "thinking": true
+  }
+}

@@ -1,0 +1,201 @@
+{
+  "schema_version": 1,
+  "control_id": "duck-clean-room-v1",
+  "captured_at": "2026-09-20",
+  "upstream": {
+    "repository": "https://github.com/Tufalabs/duck-harness",
+    "revision": "7652836056c59e044f093e3c13ed7438c814169e",
+    "committed_at": "2026-07-01T16:59:32+02:00",
+    "license_claim": "PyPI classifier: License :: OSI Approved :: MIT License",
+    "license_file_present": false,
+    "github_detected_license": null,
+    "reuse_policy": "clean-room-behavioral-reimplementation-only",
+    "source_files": [
+      {
+        "name": "ARC3-Inference/configs/inference.json",
+        "sha256": "ec290bcdc79590d336585ef104768ede797af23bcd83eb0263fadeab63e787b8"
+      },
+      {
+        "name": "ARC3-Inference/inference/agent/prompts.py",
+        "sha256": "a8e203fbe288116a24f29f6880f0657873df51fee76b0af9ef2b44cc3d0186d3"
+      },
+      {
+        "name": "ARC3-Inference/inference/agent/tool_agent.py",
+        "sha256": "535ee88b81b262fa5aedb785466ade9f3183a6417656fb6733427242baac7c9d"
+      },
+      {
+        "name": "ARC3-Inference/inference/agent/python_tool_sandbox.py",
+        "sha256": "765e90cf8d141f912f6cfbba498426c9b0de9453e6e44c97d3bc8df45cf9aa91"
+      },
+      {
+        "name": "ARC3-Inference/inference/agent/action_names.py",
+        "sha256": "d359c22dd9f3925ed54cb05a60640e8aa1121c226a068b4736e8dfad46d2d115"
+      },
+      {
+        "name": "ARC3-Inference/inference/utils/segmentation.py",
+        "sha256": "e9499bd859b4488455b481d3f0577a2c59feba9f78b92f20befc5d294ee09ee0"
+      },
+      {
+        "name": "ARC3-Inference/inference/framework/kaggle.py",
+        "sha256": "d600a993a8642a808fb83080be40bfc3fd9ababa6b84e15abba713e8e2d7ebbe"
+      },
+      {
+        "name": "ARC3-Inference/pyproject.toml",
+        "sha256": "e1615814eddbc6a731b630380144081d502f6bd9051b5a7aa09b93bae2ae4e77"
+      },
+      {
+        "name": "tufa-arc-agi-framework/pyproject.toml",
+        "sha256": "7ba1dc276abf79564f86170f3c3e6668b84c2db554bd021c1efab48f6c0d5554"
+      },
+      {
+        "name": "taaf-duck-harness-kaggle-share.ipynb",
+        "sha256": "40712c5775d9ad02263857fa1a25b1bc16291f88abfeec9c1e782a039e557e6e"
+      }
+    ]
+  },
+  "model": {
+    "repository": "vrfai/Qwen3.6-27B-FP8",
+    "revision": "076636763143ca2b7cf0d66e16a09c2a0a689dfa",
+    "license": "Apache-2.0",
+    "kaggle_dataset": {
+      "ref": "driessmit1/vrfai-qwen3-6-27b-fp8-hf-snapshot",
+      "id": 10453841,
+      "version": 1,
+      "last_updated": "2026-05-17T03:59:53.993Z",
+      "total_bytes": 35943228423
+    },
+    "files": [
+      {
+        "name": "model.safetensors",
+        "sha256": "00123c8e4bc39fb738512545f59e17c8c568c607905d9f812bb9adb884400001",
+        "size_bytes": 35923194376
+      },
+      {
+        "name": "tokenizer.json",
+        "sha256": "e56427d66f44411c2dec1288b236f6d2c3eeafd611d1d0e2e92ad9301616e1e7",
+        "size_bytes": 19989424
+      }
+    ]
+  },
+  "wheelhouse": {
+    "kaggle_dataset": {
+      "ref": "driessmit1/arc3-vllm-h100-wheelhouse-v3",
+      "id": 10283361,
+      "version": 1,
+      "last_updated": "2026-05-01T07:00:54.597Z",
+      "total_bytes": 5187963152
+    },
+    "checksum_manifest": {
+      "name": "SHA256SUMS",
+      "sha256": "44029b360a9c0073e4b0add10703fc3386dc06bf1314f5913a0dad9564144cbb",
+      "size_bytes": 21285
+    },
+    "checksum_manifest_url": "https://www.kaggle.com/api/v1/datasets/download/driessmit1/arc3-vllm-h100-wheelhouse-v3/SHA256SUMS",
+    "checksum_entry_count": 179,
+    "packages": [
+      {
+        "name": "vllm-0.19.0-cp38-abi3-manylinux_2_31_x86_64.whl",
+        "sha256": "2d0e5fae45367bdbf111fcad68f4c0f8fdddd2f2fb643e52f0f2daebef7b41cf"
+      },
+      {
+        "name": "torch-2.10.0-3-cp312-cp312-manylinux_2_28_x86_64.whl",
+        "sha256": "98c01b8bb5e3240426dcde1446eed6f40c778091c8544767ef1168fc663a05a6"
+      },
+      {
+        "name": "flashinfer_python-0.6.6-py3-none-any.whl",
+        "sha256": "078f158636969eec1a0d3dea19c3ca90b426b66df89bbf7b7b8276ce2ec08148"
+      },
+      {
+        "name": "flashinfer_cubin-0.6.6-py3-none-any.whl",
+        "sha256": "36508dfc792eb5ecfb15d2c140a7702812e1fa1ab0fb03929b2ed55e3e8191f3"
+      },
+      {
+        "name": "transformers-4.57.6-py3-none-any.whl",
+        "sha256": "4c9e9de11333ddfe5114bc872c9f370509198acf0b87a832a0ab9458e2bd0550"
+      },
+      {
+        "name": "triton-3.6.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+        "sha256": "74caf5e34b66d9f3a429af689c1c7128daba1d8208df60e81106b115c00d6fca"
+      },
+      {
+        "name": "compressed_tensors-0.14.0.1-py3-none-any.whl",
+        "sha256": "46c4940a3a779d3d97108c294bfcd9acf4bd0491f7c6737c320f0e815ec732e4"
+      },
+      {
+        "name": "requirements.lock",
+        "sha256": "59d4e7231d8a94cf12f5b8289dd38a200243e725f7f3a68365022cceb2167f88"
+      }
+    ]
+  },
+  "runtime": {
+    "python": "3.12.12",
+    "vllm": "0.19.0",
+    "torch": "2.10.0",
+    "flashinfer": "0.6.6",
+    "transformers": "4.57.6",
+    "triton": "3.6.0"
+  },
+  "serving": {
+    "served_model_name": "vrfai/Qwen3.6-27B-FP8",
+    "host": "127.0.0.1",
+    "port": 1234,
+    "tensor_parallel_size": 1,
+    "max_model_len": 65536,
+    "agent_context_window": 32768,
+    "tool_call_parser": "qwen3_coder",
+    "reasoning_parser": "qwen3",
+    "generation_config": "vllm",
+    "enable_prefix_caching": true,
+    "preserve_thinking": true
+  },
+  "generation": {
+    "thinking": true,
+    "temperature": 0.6,
+    "top_p": 0.95,
+    "top_k": 20,
+    "max_output_tokens": null,
+    "request_timeout_seconds": 120,
+    "tool_timeout_seconds": 30,
+    "tool_output_tokens": 1024
+  },
+  "agent_contract": {
+    "observation": "current 64x64 grid image plus letter-coded ASCII and deterministic 4-connected segmentation",
+    "history": "episode-local action/frame history, explicit before/after transitions, and compact world-model fields",
+    "tool": "one ephemeral sandboxed Python function with an action(actions) callback",
+    "action_map": {
+      "ACTION1": "UP",
+      "ACTION2": "DOWN",
+      "ACTION3": "LEFT",
+      "ACTION4": "RIGHT",
+      "ACTION5": "SPACE",
+      "ACTION6": "MOUSE",
+      "RESET": "RESET"
+    },
+    "python_modules": [
+      "bisect",
+      "collections",
+      "copy",
+      "fractions",
+      "functools",
+      "heapq",
+      "itertools",
+      "json",
+      "math",
+      "operator",
+      "random",
+      "re",
+      "statistics",
+      "string"
+    ],
+    "persistent_summary_fields": [
+      "world_model",
+      "goal_model",
+      "action_model",
+      "recent_findings",
+      "open_questions",
+      "current_plan",
+      "cross_level_notes"
+    ],
+    "persistent_assistant_turns": 30
+  }
+}

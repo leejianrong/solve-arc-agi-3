@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Kaggle notebook outputs / large downloaded models never belong in git
+docs/research/phase0-results/
+*.gguf
+logs.log
+runs/

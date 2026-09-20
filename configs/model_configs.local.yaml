@@ -1,0 +1,44 @@
+# SUPERSEDED PROTOTYPE: retained for provenance only. ADR-0009 replaces this
+# Qwen3-30B-A3B/Ollama/GGUF path with Qwen 3.6 27B FP8 on pinned vLLM. Do not
+# use this as the current V1 baseline.
+#
+# Model config entry for arc-agi-3-benchmarking (docs/adr/0001, ADR-0002),
+# pointing at a locally-served, quantized model over an OpenAI-compatible
+# endpoint. Served via Ollama (ADR-0002's 2026-08-31 update) -- llama.cpp
+# itself has no prebuilt CUDA binary for Linux, and llama-cpp-python's
+# from-source build failed on Kaggle, so Ollama's static, already-compiled
+# binary is the concrete tool, not those two.
+#
+# arc-agi-3-benchmarking loads model configs from a fixed path inside its own
+# package (benchmarking/model_configs.yaml), not from an external file or env
+# var (see benchmarking/model_config.py:MODEL_CONFIG_PATH). So this entry
+# isn't consumed directly -- append it into that file inside whatever
+# checkout of arc-agi-3-benchmarking is running (the Kaggle notebook does
+# this at setup time; see notebooks/slice1_phase0_baseline.ipynb).
+#
+# Ollama's OpenAI-compatible endpoint doesn't enforce a real API key by
+# default, but the openai-python client still requires a non-empty string,
+# so set LOCAL_LLAMACPP_API_KEY to any placeholder value (e.g. "not-needed").
+#
+# `request.model` must match exactly what was `ollama pull`-ed in the
+# notebook (Ollama's OpenAI-compat layer routes on this string).
+#
+# MAX_CONTEXT_LENGTH below is conservative (Qwen3-30B-A3B's native context is
+# larger); tighten or loosen it once slice 1's benchmark shows what actually
+# fits the wall-clock budget at this model's measured tokens/sec.
+
+- id: "qwen3-30b-a3b-local-gguf"
+  agent:
+    MAX_ACTIONS_BASELINE_MULTIPLIER: 5.0
+    MAX_CONTEXT_LENGTH: 32_000
+  runtime:
+    sdk: "openai-python"
+    api: "chat_completions"
+    state: "manual_rolling"
+  client:
+    base_url: "http://127.0.0.1:11434/v1"
+    api_key_env: "LOCAL_LLAMACPP_API_KEY"
+  request:
+    model: "hf.co/unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M"
+    max_completion_tokens: 4_096
+  pricing: {}
