@@ -51,17 +51,18 @@ main_job() {
   apt-get update -qq && apt-get install -y -qq git curl ca-certificates jq build-essential >/dev/null
   install_runpodctl
 
-  # On Blackwell (RTX PRO 6000, the actual Kaggle target hardware -- this bit
-  # A100 too, but only there), some kernels have no precompiled path and
-  # torch/inductor falls back to compiling one on the fly via nvcc, which the
-  # bare image doesn't have: "Could not find nvcc and default
-  # cuda_home='/usr/local/cuda' doesn't exist". Match the CUDA version the
-  # pinned torch wheel reports (12.8) so the JIT-compiled kernel is ABI
-  # compatible with it.
+  # On Blackwell (RTX PRO 6000, the actual Kaggle target hardware) some
+  # kernels (FlashInfer's sm120 grouped GEMM, at least) have no precompiled
+  # path and get JIT-compiled via nvcc + cutlass/cuRAND headers, none of
+  # which the bare image has. cuda-nvcc-12-8 alone got past "Could not find
+  # nvcc" but then failed on "curand_kernel.h: No such file or directory";
+  # install the full toolkit rather than chase individual -dev subpackages
+  # one missing header at a time. Version matches the pinned torch wheel's
+  # reported CUDA version (12.8) so JIT-compiled kernels are ABI compatible.
   curl -fsSL -o /tmp/cuda-keyring.deb \
     https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
   dpkg -i /tmp/cuda-keyring.deb
-  apt-get update -qq && apt-get install -y -qq cuda-nvcc-12-8 >/dev/null
+  apt-get update -qq && apt-get install -y -qq cuda-toolkit-12-8 >/dev/null
   export CUDA_HOME=/usr/local/cuda-12.8
   export PATH="$CUDA_HOME/bin:$PATH"
   ln -sf "$CUDA_HOME" /usr/local/cuda
