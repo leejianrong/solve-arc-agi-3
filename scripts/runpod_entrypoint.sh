@@ -53,7 +53,10 @@ main_job() {
 
   git clone --depth 1 https://github.com/leejianrong/solve-arc-agi-3.git repo
   cd repo || { echo "PHASE=clone_failed"; return 1; }
-  uv sync --group dev
+  # Pin 3.12: the wheelhouse's core wheels (torch, flashinfer, ...) are
+  # cp312-tagged and will not install into any other interpreter ABI.
+  uv python install 3.12
+  uv sync --group dev --python 3.12
   uv tool install kaggle --quiet
 
   mkdir -p /workspace/assets/model /workspace/assets/wheelhouse
