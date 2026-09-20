@@ -274,7 +274,17 @@ class BaselineAgentCore:
     def conversation(self) -> tuple[ChatMessage, ...]:
         return tuple(self._conversation)
 
-    def choose(self, observation: Observation) -> AgentTurn:
+    def request_completion(
+        self, observation: Observation
+    ) -> tuple[InferenceRequest, InferenceResponse]:
+        """Send one model call and return it, without parsing an action yet.
+
+        Split from `choose` so a caller that wants trace visibility even on a
+        parse failure -- action parsing can reject a well-formed response --
+        can log the request/response before calling `record_decision`, which
+        is the step that can raise.
+        """
+
         observation_payload = observation.model_dump(mode="json")
         observation_payload["ascii_grid"] = "\n".join(
             "".join("0123456789ABCDEF"[cell] for cell in row)
@@ -301,18 +311,33 @@ class BaselineAgentCore:
             messages=(*self._conversation, user_message), tools=(PYTHON_TOOL,)
         )
         response = self._client.complete(request)
+        self._conversation = list(request.messages)
+        return request, response
+
+    def record_decision(
+        self, observation: Observation, response: InferenceResponse
+    ) -> ActionDecision:
+        """Parse an action from a completion and extend conversation history.
+
+        Raises if no available action can be parsed; the caller is
+        responsible for having already traced `response` if that matters,
+        since this step can fail on an otherwise well-formed reply.
+        """
+
         decision = parse_action_decision(
             response, available_actions=observation.available_actions
         )
-        self._conversation.extend(
-            [
-                user_message,
-                ChatMessage(
-                    role="assistant",
-                    content=response.content or f"Selected {decision.name} via tool.",
-                ),
-            ]
+        self._conversation.append(
+            ChatMessage(
+                role="assistant",
+                content=response.content or f"Selected {decision.name} via tool.",
+            )
         )
+        return decision
+
+    def choose(self, observation: Observation) -> AgentTurn:
+        request, response = self.request_completion(observation)
+        decision = self.record_decision(observation, response)
         return AgentTurn(
             observation=observation,
             request=request,

@@ -198,7 +198,13 @@ def _post_chat(
                 break
             chunk = json.loads(payload)
             for choice in chunk.get("choices") or []:
-                if choice.get("delta", {}).get("content") and ttft is None:
+                delta = choice.get("delta", {})
+                # With thinking enabled, reasoning tokens (reasoning_content)
+                # stream before the final answer's content tokens -- the
+                # first *token* of either kind is the real TTFT.
+                if (
+                    delta.get("content") or delta.get("reasoning_content")
+                ) and ttft is None:
                     ttft = time.monotonic() - started
             usage = chunk.get("usage")
             if usage:

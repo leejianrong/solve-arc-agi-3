@@ -87,28 +87,33 @@ def _run_smoke_episode(
         initial = environment.reset()
         observation = observation_from_frame(initial)
         trace.append("observation", observation.model_dump(mode="json"))
-        turn = agent.choose(observation)
-        request: dict[str, Any]
+        # Trace the request/response before parsing an action from it: parsing
+        # can reject an otherwise well-formed reply, and losing visibility
+        # into what the model actually said makes that failure undebuggable.
+        model_request, model_response = agent.request_completion(observation)
+        request_payload: dict[str, Any]
         if request_capture is None:
-            request = {
+            request_payload = {
                 "model": config.model,
                 "messages": [
-                    message.model_dump(mode="json") for message in turn.request.messages
+                    message.model_dump(mode="json")
+                    for message in model_request.messages
                 ],
-                "tools": [tool.model_dump(mode="json") for tool in turn.request.tools],
+                "tools": [tool.model_dump(mode="json") for tool in model_request.tools],
             }
         else:
-            request = request_capture[-1]
-            assert_openai_request_shape(request)
-        trace.append("model_request", request)
-        trace.append("model_response", turn.response.model_dump(mode="json"))
-        trace.append("action_decision", turn.decision.model_dump(mode="json"))
-        terminal = environment.step(turn.decision.name)
+            request_payload = request_capture[-1]
+            assert_openai_request_shape(request_payload)
+        trace.append("model_request", request_payload)
+        trace.append("model_response", model_response.model_dump(mode="json"))
+        decision = agent.record_decision(observation, model_response)
+        trace.append("action_decision", decision.model_dump(mode="json"))
+        terminal = environment.step(decision.name)
         terminal_observation = observation_from_frame(terminal)
         trace.append(
             "environment_transition",
             {
-                "action": turn.decision.model_dump(mode="json"),
+                "action": decision.model_dump(mode="json"),
                 "observation": terminal_observation.model_dump(mode="json"),
             },
         )

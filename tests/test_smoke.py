@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from solve_arc_agi_3.agent import (
     BaselineAgentCore,
     OfficialAgentAdapter,
@@ -15,7 +17,11 @@ from solve_arc_agi_3.inference import (
     OpenAICompatibleClient,
     ToolCall,
 )
-from solve_arc_agi_3.smoke import SmokeFrame, run_deterministic_smoke
+from solve_arc_agi_3.smoke import (
+    SmokeFrame,
+    _run_smoke_episode,
+    run_deterministic_smoke,
+)
 
 PROJECT_ROOT = Path(__file__).parents[1]
 MANIFEST_PATH = PROJECT_ROOT / "configs/baselines/duck-control-v1.json"
@@ -147,6 +153,36 @@ def test_python_tool_parses_official_mouse_coordinates() -> None:
 
     assert decision.name == "ACTION6"
     assert decision.data == {"x": 34, "y": 12}
+
+
+class _UnparseableClient:
+    """A model client whose reply never names an available ARC action."""
+
+    def complete(self, request: object) -> InferenceResponse:
+        del request
+        return InferenceResponse(content="I am thinking it over.", elapsed_seconds=0)
+
+
+def test_a_failed_parse_still_traces_the_request_and_response(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="did not contain an available"):
+        _run_smoke_episode(
+            config=_fake_config(tmp_path),
+            runs_root=tmp_path / "runs",
+            client=_UnparseableClient(),
+            request_capture=None,
+            network_requests=1,
+            run_id_factory=lambda: "run-unparseable",
+        )
+
+    events = _read_trace(tmp_path / "runs" / "run-unparseable" / "trace.jsonl")
+    assert [event["event"] for event in events] == [
+        "configuration",
+        "observation",
+        "model_request",
+        "model_response",
+        "error",
+    ]
+    assert events[3]["data"]["content"] == "I am thinking it over."
 
 
 def test_direct_text_fallback_uses_final_available_action_with_coordinates() -> None:
