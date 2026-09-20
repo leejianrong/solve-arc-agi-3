@@ -1,0 +1,4 @@
+{"event": "process_started", "monotonic_seconds": 9343063.833648195, "pid": 7815}
+{"elapsed_seconds": 351.33872438408434, "event": "ready", "monotonic_seconds": 9343415.172471428}
+{"event": "terminate_sent", "monotonic_seconds": 9343463.429345332, "pid": 7815}
+{"elapsed_seconds": 1.4703281447291374, "event": "stopped", "exit_code": 0, "monotonic_seconds": 9343464.899639908, "pid": 7815}

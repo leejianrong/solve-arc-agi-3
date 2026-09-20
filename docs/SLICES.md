@@ -8,13 +8,18 @@ reproduced, packaged, and projected under the current nine-hour limit.
 
 **Target:** September 20–22 · **Delivers:** R0 (partial), R1, R6 (measurement)
 
-**Implementation note (2026-09-20):** the CPU-only artifact slice now includes
+**Implementation note (2026-09-20):** the CPU-only artifact slice includes
 typed provider/runtime configuration, offline preflight, an owned-process vLLM
 lifecycle, the official `choose_action`/`is_done` adapter, run-scoped traces, and
 a deterministic no-network fake-server smoke. OpenRouter currently lists
-`qwen/qwen3.6-27b`, but it is explicitly development-only. Full mounted-asset
-preflight and exact RunPod FP8 smoke/performance evidence remain required before
-V1 or ARC-42 can be considered complete.
+`qwen/qwen3.6-27b`, but it is explicitly development-only. The real RunPod FP8
+acceptance run passed the same day, on the actual planned Kaggle GPU (RTX PRO
+6000 Blackwell): full mounted-asset preflight against the real 35.9GB model and
+5.1GB wheelhouse, a real agent-path smoke, zero offline download attempts, and
+a saved machine-readable benchmark report -- see
+[`docs/baselines/evidence/runpod-acceptance-2026-09-20/`](baselines/evidence/runpod-acceptance-2026-09-20/).
+ARC-42 is complete; ARC-40 (concurrency/context sweep on the Kaggle GPU
+envelope) is next.
 
 **Build plan**
 

@@ -1,6 +1,6 @@
 # Qwen3.6 27B FP8 baseline artifact
 
-Status: local CPU slice implemented; real RunPod FP8 acceptance pending
+Status: local CPU slice implemented; real RunPod FP8 acceptance passed 2026-09-20
 
 This is an original clean-room harness for the control pinned in
 [`duck-control-v1.json`](../../configs/baselines/duck-control-v1.json). It does
@@ -14,9 +14,9 @@ does not alter prompt or action behavior.
 | Environment | What it proves | Current evidence |
 |---|---|---|
 | In-process fake OpenAI endpoint | Request shape, reasoning/tool response parsing, one observation/action/terminal transition, token/timing trace, and run isolation without sockets | Passing CPU test and `solve-arc-agi-3 smoke` |
-| OpenRouter | Development-only request formatting against a real hosted model | Catalogue checked 2026-09-20; `qwen/qwen3.6-27b` is listed, but no API key was present for a live request |
-| RunPod | Exact pinned FP8 weights and vLLM performance/acceptance | Pending; no GPU was provisioned in the CPU-only implementation session |
-| Offline Kaggle mount | Exact model/wheel hashes, no downloads, local server lifecycle | Code and synthetic checksum tests pass; real 35.9 GB mounted assets still need full preflight |
+| OpenRouter | Development-only request formatting against a real hosted model | Catalogue checked 2026-09-20; `qwen/qwen3.6-27b` is listed, but no API key was present for a live request. Still never control/performance evidence even when run -- see below |
+| RunPod | Exact pinned FP8 weights and vLLM performance/acceptance | **Passed 2026-09-20** on the actual planned Kaggle GPU (RTX PRO 6000 Blackwell): full asset preflight, real agent-path smoke, zero offline download attempts, clean shutdown. See [`evidence/runpod-acceptance-2026-09-20/`](evidence/runpod-acceptance-2026-09-20/) |
+| Offline Kaggle mount | Exact model/wheel hashes, no downloads, local server lifecycle | Verified against the real 35.9 GB model snapshot and 5.1 GB wheelhouse during the RunPod run above (same preflight code path); a from-`/kaggle/input` run is still open for the actual Kaggle notebook environment |
 
 OpenRouter identifies `qwen/qwen3.6-27b` with Hugging Face source
 `Qwen/Qwen3.6-27B`. It does not claim the pinned
@@ -121,6 +121,35 @@ request latencies, full asset-preflight outcome, offline download-attempt count,
 and real smoke outcome. Do not create a passing report from OpenRouter or fake
 server measurements.
 
-RunPod work must begin by loading the `/run` skill and must terminate paid
-resources at the end. That skill was not available in this local session, so no
-pod was provisioned and no GPU figures are claimed here.
+This passed for real on 2026-09-20. `scripts/runpod_entrypoint.sh` is the
+pod-side driver (dead-man's-switch, asset download, offline install, preflight,
+serve, smoke, benchmark, relay the artifact back, self-terminate);
+`scripts/runpod_benchmark.py` is the orchestrator it runs, built on
+`solve_arc_agi_3.runpod_report`'s testable report-assembly helpers. The full
+report and logs are in
+[`evidence/runpod-acceptance-2026-09-20/`](evidence/runpod-acceptance-2026-09-20/),
+including:
+
+- GPU: `NVIDIA RTX PRO 6000 Blackwell Server Edition` (96GB), the actual
+  planned Kaggle hardware, on RunPod's community cloud.
+- `full_asset_preflight_passed: true`, `real_smoke_request_passed: true`,
+  `offline_download_attempts: 0`, `server_exit_code: 0`.
+- `model_load_seconds: 351.3`, `time_to_first_token_seconds: 0.885`,
+  `prefill_tokens_per_second: 1819`, `decode_tokens_per_second: 38.7`,
+  `stable_context_tokens: 25010`, concurrency 1.
+- Container image, model revision, and wheelhouse dataset all pinned by
+  digest/hash in the report's provenance fields.
+
+Getting there took ten provisioning attempts, each a real fix uncovered by a
+real failure, not a simulated one: the bare `ubuntu:24.04` image has no
+`curl`/C compiler/CUDA toolkit; `uv` needs an explicit `--python 3.12` pin
+against the pinned cp312 wheels and its managed venv ships without `pip`;
+Blackwell's FlashInfer kernels have no precompiled path and JIT-compile via
+`nvcc` against the full CUDA toolkit headers; the real model calls the Python
+tool with a bare integer action id (`action(1)`, matching how
+`available_actions` is serialized in the observation) rather than a string
+name, which `agent.py`'s parser didn't originally accept; and the streaming
+throughput probe's time-to-first-token detection missed reasoning-channel
+tokens entirely. Each is a real commit on `main`, not reverted scaffolding.
+RunPod resources were terminated after every attempt, verified via
+`runpodctl pod list`.
