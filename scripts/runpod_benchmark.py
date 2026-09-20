@@ -192,6 +192,7 @@ def _post_chat(
         chunk_count = 0
         content_chunk_count = 0
         first_chunk_at: float | None = None
+        first_nonempty_delta: dict[str, object] | None = None
         for raw_line in response:
             line = raw_line.decode("utf-8").strip()
             if not line.startswith("data:"):
@@ -205,10 +206,19 @@ def _post_chat(
             chunk = json.loads(payload)
             for choice in chunk.get("choices") or []:
                 delta = choice.get("delta", {})
-                # With thinking enabled, reasoning tokens (reasoning_content)
-                # stream before the final answer's content tokens -- the
-                # first *token* of either kind is the real TTFT.
-                if delta.get("content") or delta.get("reasoning_content"):
+                if delta and first_nonempty_delta is None:
+                    first_nonempty_delta = delta
+                # With thinking enabled, reasoning tokens stream before the
+                # final answer's content tokens -- the first *token* of
+                # either kind is the real TTFT. Field name for the reasoning
+                # channel is unconfirmed for this vLLM version (the
+                # non-streaming parser in inference.py tries both
+                # reasoning_content and reasoning), so check all three.
+                if (
+                    delta.get("content")
+                    or delta.get("reasoning_content")
+                    or delta.get("reasoning")
+                ):
                     content_chunk_count += 1
                     if ttft is None:
                         ttft = time.monotonic() - started
@@ -222,7 +232,8 @@ def _post_chat(
     print(
         "PHASE=stream_debug "
         f"sse_chunks={chunk_count} content_chunks={content_chunk_count} "
-        f"first_chunk_at={first_chunk_at} ttft={ttft} total={ended - started}",
+        f"first_chunk_at={first_chunk_at} ttft={ttft} total={ended - started} "
+        f"first_nonempty_delta={json.dumps(first_nonempty_delta)}",
         flush=True,
     )
     return ChatBenchmarkResult(
