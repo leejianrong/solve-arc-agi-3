@@ -11,3 +11,9 @@ docs/research/phase0-results/
 *.gguf
 logs.log
 runs/
+
+# Credentials -- never commit; copy .env.example instead
+.env
+.env.*
+!.env.example
+kaggle.json

@@ -47,6 +47,14 @@ The baseline operator commands and the boundary between fake, OpenRouter,
 RunPod, and offline Kaggle evidence are documented in
 [`docs/baselines/qwen36-vllm-artifact.md`](docs/baselines/qwen36-vllm-artifact.md).
 
+## Credentials
+
+`make check` and `make smoke` need none. Everything else that touches a real
+provider or GPU reads its credential from the environment, never from a
+config file. Copy [`.env.example`](.env.example) to `.env`, fill in the keys
+you need, and source it yourself (see the file for how) before running
+`provider-smoke`, provisioning RunPod, or fetching the pinned Kaggle datasets.
+
 ## Status
 
 The plan was revised on 2026-09-20 after the Milestone 1 Duck harness and newer
