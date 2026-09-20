@@ -57,6 +57,10 @@ main_job() {
   # cp312-tagged and will not install into any other interpreter ABI.
   uv python install 3.12
   uv sync --group dev --python 3.12
+  # uv's managed venvs ship without pip; the pinned offline-install command
+  # (build_offline_install_command) shells out to "python -m pip" to match
+  # the real Kaggle environment, so bootstrap pip here rather than change it.
+  uv run python -m ensurepip --upgrade
   uv tool install kaggle --quiet
 
   mkdir -p /workspace/assets/model /workspace/assets/wheelhouse
