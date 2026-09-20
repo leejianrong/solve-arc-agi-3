@@ -189,6 +189,9 @@ def _post_chat(
         ttft: float | None = None
         prompt_tokens = 0
         completion_tokens = 0
+        chunk_count = 0
+        content_chunk_count = 0
+        first_chunk_at: float | None = None
         for raw_line in response:
             line = raw_line.decode("utf-8").strip()
             if not line.startswith("data:"):
@@ -196,16 +199,19 @@ def _post_chat(
             payload = line.removeprefix("data:").strip()
             if payload == "[DONE]":
                 break
+            chunk_count += 1
+            if first_chunk_at is None:
+                first_chunk_at = time.monotonic() - started
             chunk = json.loads(payload)
             for choice in chunk.get("choices") or []:
                 delta = choice.get("delta", {})
                 # With thinking enabled, reasoning tokens (reasoning_content)
                 # stream before the final answer's content tokens -- the
                 # first *token* of either kind is the real TTFT.
-                if (
-                    delta.get("content") or delta.get("reasoning_content")
-                ) and ttft is None:
-                    ttft = time.monotonic() - started
+                if delta.get("content") or delta.get("reasoning_content"):
+                    content_chunk_count += 1
+                    if ttft is None:
+                        ttft = time.monotonic() - started
             usage = chunk.get("usage")
             if usage:
                 prompt_tokens = int(usage.get("prompt_tokens", prompt_tokens))
@@ -213,6 +219,12 @@ def _post_chat(
                     usage.get("completion_tokens", completion_tokens)
                 )
     ended = time.monotonic()
+    print(
+        "PHASE=stream_debug "
+        f"sse_chunks={chunk_count} content_chunks={content_chunk_count} "
+        f"first_chunk_at={first_chunk_at} ttft={ttft} total={ended - started}",
+        flush=True,
+    )
     return ChatBenchmarkResult(
         time_to_first_token_seconds=ttft if ttft is not None else ended - started,
         total_seconds=ended - started,

@@ -155,6 +155,41 @@ def test_python_tool_parses_official_mouse_coordinates() -> None:
     assert decision.data == {"x": 34, "y": 12}
 
 
+def test_python_tool_parses_a_bare_integer_action_id() -> None:
+    # Real model behavior (RunPod acceptance run, 2026-09-20): the model reads
+    # available_actions back as raw ints (e.g. [1]) and calls action(1)
+    # rather than action(["ACTION1"]) -- both name the same legal move.
+    response = InferenceResponse(
+        tool_calls=(
+            ToolCall(
+                id="bare-int",
+                function=FunctionCall(name="python", arguments='{"code": "action(1)"}'),
+            ),
+        ),
+        elapsed_seconds=0,
+    )
+
+    decision = parse_action_decision(response, available_actions=[1])
+
+    assert decision.name == "ACTION1"
+    assert decision.data == {}
+
+
+def test_python_tool_rejects_an_out_of_range_integer_action_id() -> None:
+    response = InferenceResponse(
+        tool_calls=(
+            ToolCall(
+                id="bad-int",
+                function=FunctionCall(name="python", arguments='{"code": "action(9)"}'),
+            ),
+        ),
+        elapsed_seconds=0,
+    )
+
+    with pytest.raises(ValueError, match="did not contain an available"):
+        parse_action_decision(response, available_actions=[1])
+
+
 class _UnparseableClient:
     """A model client whose reply never names an available ARC action."""
 

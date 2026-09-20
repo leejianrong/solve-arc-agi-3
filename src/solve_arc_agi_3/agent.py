@@ -155,7 +155,21 @@ def observation_from_frame(frame: FrameLike) -> Observation:
     )
 
 
+def _action_name_from_id(action_id: int) -> str | None:
+    if action_id == 0:
+        return "RESET"
+    if 1 <= action_id <= 7:
+        return f"ACTION{action_id}"
+    return None
+
+
 def _decision_from_literal(value: object) -> ActionDecision | None:
+    # The observation's available_actions are raw ints (e.g. [1]); a model
+    # reading that field back often calls action(1) rather than the string
+    # tool-description name, and that is just as valid a legal move.
+    if isinstance(value, int) and not isinstance(value, bool):
+        name = _action_name_from_id(value)
+        return None if name is None else ActionDecision(name=name, source="python_tool")
     if isinstance(value, str):
         name = value.upper()
         if _ACTION_PATTERN.fullmatch(name):
@@ -164,6 +178,8 @@ def _decision_from_literal(value: object) -> ActionDecision | None:
     if not isinstance(value, dict):
         return None
     raw_name = value.get("action", value.get("action_type"))
+    if isinstance(raw_name, int) and not isinstance(raw_name, bool):
+        raw_name = _action_name_from_id(raw_name)
     if not isinstance(raw_name, str):
         return None
     name = raw_name.upper()
