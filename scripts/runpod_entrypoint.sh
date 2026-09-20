@@ -45,7 +45,10 @@ watchdog_pid=$!
 main_job() {
   set +e
   set -x
-  apt-get update -qq && apt-get install -y -qq git curl ca-certificates jq >/dev/null
+  # build-essential: Triton JIT-compiles CUDA kernels at runtime and needs a
+  # C compiler on PATH, or vLLM's engine core fails during profile_run with
+  # "Failed to find C compiler".
+  apt-get update -qq && apt-get install -y -qq git curl ca-certificates jq build-essential >/dev/null
   install_runpodctl
 
   curl -LsSf https://astral.sh/uv/install.sh | sh
