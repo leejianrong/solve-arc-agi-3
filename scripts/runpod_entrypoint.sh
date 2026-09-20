@@ -78,8 +78,10 @@ main_job() {
   echo "PHASE=benchmark_script_exit code=$bench_exit"
 
   mkdir -p /workspace/artifact
+  cp /workspace/job.log /workspace/artifact/job.log 2>/dev/null
   cp /workspace/report.json /workspace/artifact/report.json 2>/dev/null
   cp -r "$run_dir" /workspace/artifact/run 2>/dev/null
+  echo "PHASE=artifact_contents $(find /workspace/artifact -type f 2>/dev/null | tr '\n' ' ')"
   tar czf /workspace/artifact.tar.gz -C /workspace artifact 2>&1
 
   base="arc42-$RANDOM"
