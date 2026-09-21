@@ -1,4 +1,5 @@
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -218,6 +219,28 @@ def test_a_failed_parse_still_traces_the_request_and_response(tmp_path: Path) ->
         "error",
     ]
     assert events[3]["data"]["content"] == "I am thinking it over."
+
+
+def test_concurrent_smoke_episodes_do_not_collide(tmp_path: Path) -> None:
+    """Regression guard for the ARC-40 concurrency sweep: N threads calling
+    `run_deterministic_smoke` into the same `runs_root` must each get an
+    isolated run directory, with no race in the shared parent mkdir."""
+
+    config = _fake_config(tmp_path)
+    runs_root = tmp_path / "runs" / "concurrency-8"
+    concurrency = 8
+
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        futures = [
+            pool.submit(run_deterministic_smoke, config=config, runs_root=runs_root)
+            for _ in range(concurrency)
+        ]
+        results = [future.result() for future in futures]
+
+    assert len({result.run_id for result in results}) == concurrency
+    assert all(result.terminal_state == "WIN" for result in results)
+    for result in results:
+        assert result.trace_path.exists()
 
 
 def test_direct_text_fallback_uses_final_available_action_with_coordinates() -> None:

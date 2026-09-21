@@ -1,15 +1,22 @@
 #!/usr/bin/env bash
-# Pod-side driver for the ARC-42 RunPod FP8 acceptance run.
+# Pod-side driver for RunPod GPU benchmark runs (ARC-42 acceptance and the
+# ARC-40 concurrency sweep share this driver).
 #
 # Bakes in the dead-man's-switch (hard max-lifetime + idle watchdog) required
 # by the runpod-jobs skill, then: clones the public repo, downloads the two
-# pinned Kaggle datasets, runs scripts/runpod_benchmark.py (offline install,
-# full preflight, vLLM serve, real agent-path smoke, benchmark), and relays
-# the report + run directory back over the runpodctl file-transfer relay --
-# this pod has no public IP. Self-terminates unconditionally when the job
+# pinned Kaggle datasets, runs the pod-side job (offline install, full
+# preflight, vLLM serve, real agent-path smoke/benchmark), and relays the
+# report/evidence + run directory back over the runpodctl file-transfer relay
+# -- this pod has no public IP. Self-terminates unconditionally when the job
 # ends, times out, or goes idle. Expects KAGGLE_USERNAME, KAGGLE_KEY,
 # RUNPOD_API_KEY, and CONTAINER_IMAGE in the environment (set via the pod's
 # create-body env, not embedded here).
+#
+# JOB_COMMAND overrides the pod-side job; it defaults to the exact ARC-42
+# acceptance command (scripts/runpod_benchmark.py). ARTIFACT_PREFIX names the
+# runpodctl send code (defaults to "arc42"). Set both to run a different
+# benchmark job -- e.g. scripts/runpod_concurrency_sweep.py for ARC-40 --
+# without touching any of the infra fixes below.
 set -uo pipefail
 export DEBIAN_FRONTEND=noninteractive
 mkdir -p /workspace
@@ -94,23 +101,28 @@ main_job() {
   du -sh /workspace/assets/model /workspace/assets/wheelhouse 2>&1 || true
 
   run_dir="/workspace/runs/runpod-$(date -u +%Y%m%dT%H%M%SZ)"
-  uv run python scripts/runpod_benchmark.py \
+  # JOB_COMMAND lets a caller swap in a different pod-side driver (e.g. the
+  # ARC-40 concurrency sweep) while reusing every fix above unchanged; it
+  # defaults to the exact ARC-42 acceptance-run command.
+  job_command="${JOB_COMMAND:-uv run python scripts/runpod_benchmark.py \
     --model-dir /workspace/assets/model \
     --wheelhouse-dir /workspace/assets/wheelhouse \
-    --run-dir "$run_dir" \
+    --run-dir \"$run_dir\" \
     --report-out /workspace/report.json \
-    --container-image "${CONTAINER_IMAGE:-unknown}"
+    --container-image \"${CONTAINER_IMAGE:-unknown}\"}"
+  eval "$job_command"
   bench_exit=$?
   echo "PHASE=benchmark_script_exit code=$bench_exit"
 
   mkdir -p /workspace/artifact
   cp /workspace/job.log /workspace/artifact/job.log 2>/dev/null
   cp /workspace/report.json /workspace/artifact/report.json 2>/dev/null
+  cp -r /workspace/evidence /workspace/artifact/evidence 2>/dev/null
   cp -r "$run_dir" /workspace/artifact/run 2>/dev/null
   echo "PHASE=artifact_contents $(find /workspace/artifact -type f 2>/dev/null | tr '\n' ' ')"
   tar czf /workspace/artifact.tar.gz -C /workspace artifact 2>&1
 
-  base="arc42-$RANDOM"
+  base="${ARTIFACT_PREFIX:-arc42}-$RANDOM"
   runpodctl send --code "$base" /workspace/artifact.tar.gz >/tmp/send.log 2>&1 &
   send_pid=$!
   code=""

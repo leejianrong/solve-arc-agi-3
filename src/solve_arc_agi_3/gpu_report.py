@@ -84,6 +84,62 @@ def write_gpu_benchmark_report(report: GpuBenchmarkReport, path: Path) -> None:
     temporary.replace(path)
 
 
+class ConcurrencyMetrics(ReportModel):
+    """Aggregate measurements from firing several concurrent agent episodes."""
+
+    concurrency: int = Field(gt=0)
+    total_requests: int = Field(gt=0)
+    successful_requests: int = Field(ge=0)
+    aggregate_prompt_tokens_per_second: float = Field(ge=0)
+    aggregate_completion_tokens_per_second: float = Field(ge=0)
+    request_latency_seconds: tuple[float, ...] = Field(min_length=1)
+    peak_vram_bytes: int = Field(gt=0)
+    stable_context_tokens: int = Field(gt=0)
+    wall_clock_seconds: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_success_count(self) -> ConcurrencyMetrics:
+        if self.successful_requests > self.total_requests:
+            raise ValueError("successful_requests cannot exceed total_requests")
+        if len(self.request_latency_seconds) != self.total_requests:
+            raise ValueError("request_latency_seconds must have one entry per request")
+        return self
+
+
+class ConcurrencyBenchmarkReport(ReportModel):
+    """One concurrency level's point in the ARC-40 GPU resource-envelope sweep.
+
+    Deliberately not a `GpuBenchmarkReport`: that schema's validator pins
+    concurrency to 1 for the first acceptance run, on purpose, and this report
+    exists precisely to cover concurrency > 1.
+    """
+
+    schema_version: Literal[1] = 1
+    run_id: str
+    started_at: datetime
+    ended_at: datetime
+    deployment: DeploymentProvenance
+    control: ControlProvenance
+    metrics: ConcurrencyMetrics
+
+    @model_validator(mode="after")
+    def validate_sweep_run(self) -> ConcurrencyBenchmarkReport:
+        if self.ended_at <= self.started_at:
+            raise ValueError("ended_at must be after started_at")
+        return self
+
+
+def write_concurrency_benchmark_report(
+    report: ConcurrencyBenchmarkReport, path: Path
+) -> None:
+    """Atomically persist one concurrency level's sweep report."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(report.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
 def write_gpu_benchmark_schema(path: Path) -> None:
     """Persist a JSON Schema that a remote benchmark collector can validate."""
 
