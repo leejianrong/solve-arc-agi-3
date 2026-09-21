@@ -18,8 +18,20 @@ acceptance run passed the same day, on the actual planned Kaggle GPU (RTX PRO
 5.1GB wheelhouse, a real agent-path smoke, zero offline download attempts, and
 a saved machine-readable benchmark report -- see
 [`docs/baselines/evidence/runpod-acceptance-2026-09-20/`](baselines/evidence/runpod-acceptance-2026-09-20/).
-ARC-42 is complete; ARC-40 (concurrency/context sweep on the Kaggle GPU
-envelope) is next.
+ARC-42 is complete. ARC-40 (concurrency/context sweep on the Kaggle GPU
+envelope) is also complete, but on an A100, not the RTX PRO 6000 Blackwell --
+the Blackwell GPU had no available instances and was priced above the
+originally-approved cap at provisioning time, and the repo owner explicitly
+chose to proceed on A100 rather than keep retrying or raise the cap. All four
+levels (1/4/8/16 concurrent real agent episodes) passed with 100% success;
+aggregate decode throughput scaled from 30.44 to 354.13 completion tokens/sec
+across that range; peak VRAM held flat at ~72.3GB. The existing
+`stable_context_tokens` probe was confirmed to report its own fixed ceiling
+(25010 tokens, identical at every level and matching ARC-42's Blackwell
+measurement) rather than a true failure point, so finding the real ceiling
+and the downward "smallest context length that preserves behavior" sweep
+this slice's build plan also calls for remain open. See
+[`docs/baselines/evidence/runpod-concurrency-sweep-2026-09-21/`](baselines/evidence/runpod-concurrency-sweep-2026-09-21/).
 
 **Build plan**
 

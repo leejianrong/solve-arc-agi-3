@@ -1,6 +1,7 @@
 # Qwen3.6 27B FP8 baseline artifact
 
-Status: local CPU slice implemented; real RunPod FP8 acceptance passed 2026-09-20
+Status: local CPU slice implemented; real RunPod FP8 acceptance passed
+2026-09-20; concurrency sweep passed 2026-09-21 (A100, not yet Blackwell)
 
 This is an original clean-room harness for the control pinned in
 [`duck-control-v1.json`](../../configs/baselines/duck-control-v1.json). It does
@@ -153,3 +154,48 @@ throughput probe's time-to-first-token detection missed reasoning-channel
 tokens entirely. Each is a real commit on `main`, not reverted scaffolding.
 RunPod resources were terminated after every attempt, verified via
 `runpodctl pod list`.
+
+## RunPod concurrency-sweep record (ARC-40)
+
+`solve_arc_agi_3.gpu_report.ConcurrencyBenchmarkReport` is the sibling schema
+for concurrency > 1 -- deliberately separate from `GpuBenchmarkReport`, whose
+validator pins the *first* acceptance report to concurrency 1 on purpose.
+`scripts/runpod_concurrency_sweep.py` starts the pinned vLLM server once, then
+for each level in 1/4/8/16 fires that many real agent episodes concurrently
+through the same agent path as the acceptance run
+(`BaselineAgentCore`/`OpenAICompatibleClient` via `smoke.run_provider_smoke`),
+reading each episode's outcome back from its own trace file. It shares
+`scripts/runpod_entrypoint.sh` with the acceptance run via a `JOB_COMMAND`
+override.
+
+This passed for real on 2026-09-21, but **on an NVIDIA A100-SXM4-80GB, not the
+RTX PRO 6000 Blackwell** -- the Blackwell GPU had no available instances and
+was priced above the originally-approved cap at provisioning time, and the
+repo owner explicitly chose to proceed on A100 rather than keep retrying or
+raise the cap. See
+[`evidence/runpod-concurrency-sweep-2026-09-21/README.md`](evidence/runpod-concurrency-sweep-2026-09-21/README.md)
+for the full caveat and results, including:
+
+- All four levels passed with 100% episode success (1/1, 4/4, 8/8, 16/16).
+- Aggregate decode throughput scaled with concurrency: 30.44 -> 107.61 ->
+  140.23 -> 354.13 completion tokens/sec at concurrency 1/4/8/16.
+- Peak VRAM held flat at ~72.3GB across every level (comfortably under the
+  A100's 80GB, and a reasonable but not exact proxy for the 96GB Blackwell).
+- `stable_context_tokens: 25010` at every level -- confirmed to be the
+  context-probe's own fixed ceiling, not a measured failure point (the same
+  value ARC-42 measured on Blackwell at concurrency 1); finding the real
+  ceiling, and sweeping downward for "the smallest context length that
+  preserves behavior" per `docs/SLICES.md`, remains open follow-up work.
+
+Two more real infra bugs surfaced provisioning this run: a `dockerStartCmd`
+that fetched `runpod_entrypoint.sh` via `curl` before running it left an
+unprotected step in front of the pod's own dead-man's-switch (fixed by
+embedding the entrypoint's content directly instead of fetching it -- a first
+attempt on this path burned ~$2.77 over ~100 minutes with no artifact before
+this was caught); and `containerDiskInGb: 60` was too small because `kaggle
+datasets download --unzip` keeps both the zip and the extracted files (fixed
+by raising to `220`). Both are documented in the `runpod-jobs` skill
+(`~/.claude/skills/runpod-jobs/`) so future RunPod jobs in any project inherit
+the fix. RunPod resources were terminated after every attempt (three total,
+two failed), verified via `runpodctl pod list` and `runpodctl network-volume
+list`.

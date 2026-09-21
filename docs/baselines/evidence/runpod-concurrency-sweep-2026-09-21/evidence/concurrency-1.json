@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "run_id": "runpod-20260921T195047Z-concurrency-1",
+  "started_at": "2026-09-21T19:57:50.974500Z",
+  "ended_at": "2026-09-21T19:58:10.512229Z",
+  "deployment": {
+    "provider": "runpod",
+    "pod_id_redacted": true,
+    "container_image": "ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3",
+    "gpu_model": "NVIDIA A100-SXM4-80GB",
+    "gpu_count": 1,
+    "gpu_memory_bytes": 85899345920,
+    "driver_version": "570.124.06",
+    "cuda_version": "12.8",
+    "python_version": "3.12.14",
+    "vllm_version": "0.19.0",
+    "torch_version": "2.10.0"
+  },
+  "control": {
+    "control_id": "duck-clean-room-v1",
+    "manifest_sha256": "ffc300010b9a782faf6714977bb57c8e9ef1079148199761ecca5528de0d8ec5",
+    "model_repository": "vrfai/Qwen3.6-27B-FP8",
+    "model_revision": "076636763143ca2b7cf0d66e16a09c2a0a689dfa",
+    "quantization": "fp8",
+    "wheelhouse_dataset": "driessmit1/arc3-vllm-h100-wheelhouse-v3@1",
+    "launch_command": [
+      "python",
+      "-m",
+      "vllm.entrypoints.openai.api_server",
+      "--model",
+      "/workspace/assets/model",
+      "--served-model-name",
+      "vrfai/Qwen3.6-27B-FP8",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "1234",
+      "--tensor-parallel-size",
+      "1",
+      "--max-model-len",
+      "65536",
+      "--tool-call-parser",
+      "qwen3_coder",
+      "--reasoning-parser",
+      "qwen3",
+      "--generation-config",
+      "vllm",
+      "--enable-auto-tool-choice",
+      "--enable-prefix-caching",
+      "--default-chat-template-kwargs",
+      "{\"enable_thinking\":true}"
+    ]
+  },
+  "metrics": {
+    "concurrency": 1,
+    "total_requests": 1,
+    "successful_requests": 1,
+    "aggregate_prompt_tokens_per_second": 47.53267239805785,
+    "aggregate_completion_tokens_per_second": 30.44011545491785,
+    "request_latency_seconds": [
+      10.409734442830086
+    ],
+    "peak_vram_bytes": 77620838400,
+    "stable_context_tokens": 25010,
+    "wall_clock_seconds": 10.413889542222023
+  }
+}

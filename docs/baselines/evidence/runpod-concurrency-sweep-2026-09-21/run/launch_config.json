@@ -1,0 +1,51 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "vllm.entrypoints.openai.api_server",
+    "--model",
+    "/workspace/assets/model",
+    "--served-model-name",
+    "vrfai/Qwen3.6-27B-FP8",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "1234",
+    "--tensor-parallel-size",
+    "1",
+    "--max-model-len",
+    "65536",
+    "--tool-call-parser",
+    "qwen3_coder",
+    "--reasoning-parser",
+    "qwen3",
+    "--generation-config",
+    "vllm",
+    "--enable-auto-tool-choice",
+    "--enable-prefix-caching",
+    "--default-chat-template-kwargs",
+    "{\"enable_thinking\":true}"
+  ],
+  "offline": true,
+  "preflight": {
+    "control_id": "duck-clean-room-v1",
+    "errors": [],
+    "full_verification": true,
+    "manifest_path": "/workspace/repo/configs/baselines/duck-control-v1.json",
+    "model_dir": "/workspace/assets/model",
+    "verified_files": [
+      "/workspace/assets/wheelhouse/SHA256SUMS",
+      "/workspace/assets/wheelhouse/vllm-0.19.0-cp38-abi3-manylinux_2_31_x86_64.whl",
+      "/workspace/assets/wheelhouse/torch-2.10.0-3-cp312-cp312-manylinux_2_28_x86_64.whl",
+      "/workspace/assets/wheelhouse/flashinfer_python-0.6.6-py3-none-any.whl",
+      "/workspace/assets/wheelhouse/flashinfer_cubin-0.6.6-py3-none-any.whl",
+      "/workspace/assets/wheelhouse/transformers-4.57.6-py3-none-any.whl",
+      "/workspace/assets/wheelhouse/triton-3.6.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+      "/workspace/assets/wheelhouse/compressed_tensors-0.14.0.1-py3-none-any.whl",
+      "/workspace/assets/wheelhouse/requirements.lock",
+      "/workspace/assets/model/model.safetensors",
+      "/workspace/assets/model/tokenizer.json"
+    ],
+    "wheelhouse_dir": "/workspace/assets/wheelhouse"
+  }
+}
