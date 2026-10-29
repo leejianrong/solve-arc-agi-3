@@ -17,7 +17,7 @@ public notebooks only; nothing here has been run. Items marked **to check** are 
 | Need | Public Kaggle asset | Status |
 |---|---|---|
 | Qwen3.6 27B FP8 | `driessmit1/vrfai-qwen3-6-27b-fp8-hf-snapshot` (29 GB, model.safetensors 35.9 GB) | Same source as `docs/baselines/duck-control-v1.md`; **verify revision 0766367 and file hashes** |
-| vLLM wheelhouse | `driessmit1/arc3-vllm-h100-wheelhouse-v3` | Pinned in duck-control-v1; **check it supports the competition GPU (RTX PRO 6000 Blackwell)** |
+| vLLM wheelhouse | `mirzamilanfarabi/arc3-vllm-h100-wheelhouse-v3` | Byte-identical to our pin (checked). The `driessmit1` original was deleted and re-created on 2026-10-05 with a different lock and fails preflight |
 | Duck harness source | `jeroencottaar/taaf-kaggle-source` (dataset licence MIT; Tufa notebook says its top submission is open source) | The upstream repo still has no LICENSE file (duck-control-v1.md); **decide whether to attach this dataset** |
 
 So the ~41 GB uploads planned in ARC-107/108 may be unnecessary. Mounting public datasets avoids them.
@@ -34,3 +34,25 @@ So the ~41 GB uploads planned in ARC-107/108 may be unnecessary. Mounting public
 ## Open
 - Daily submission limit and Phase A/B rules (**to check**: competition rules page, not readable by CLI).
 - A from-`/kaggle/input` run of our notebook on the real GPU (ARC-110).
+
+## Probe results (2026-10-29/30, private kernel `leejianrong/arc3-env-probe`, offline, `NvidiaRtxPro6000`)
+
+Source: `kaggle/probe/`. The run took under two minutes.
+
+- GPU NVIDIA RTX PRO 6000 Blackwell, 97,887 MiB; driver 580.178 (CUDA 13.0 capable); 46 CPUs; 176 GB RAM.
+- **Default Python is 3.13**, but `/usr/bin/python3.12`, `uv` (/usr/local/bin) and `ninja` exist. The pinned wheelhouse is
+  cp312, so create the venv with `uv venv --python /usr/bin/python3.12`.
+- **`nvcc` 12.8 is installed** (`/usr/local/cuda`, matches the pinned torch cu128) with `curand_kernel.h`, plus gcc/g++.
+  The RunPod JIT failures (no compiler, no toolkit) do not apply here.
+- Disk: `/kaggle/working` is 20 GB (too small for the model); `/tmp` has about 1 TB free. Use `/tmp` for the venv.
+- Inputs mount at `/kaggle/input/competitions/arc-prize-2026-arc-agi-3` and `/kaggle/input/datasets/<owner>/<slug>`.
+- ARC-107/108 (uploads) are unnecessary: the pinned model and wheelhouse are the public datasets, and they mount.
+
+## Wheelhouse drift (found by the first serve probe, 2026-10-30)
+
+The first run of `kaggle/run/serve_probe.py` failed preflight: `SHA256SUMS` was 20,949 bytes (pinned 21,285) and the
+lock hash differed. The README of `driessmit1/arc3-vllm-h100-wheelhouse-v3` says it was re-created on 2026-10-05 after
+deletion. The mirror `mirzamilanfarabi/arc3-vllm-h100-wheelhouse-v3` (2026-09-20) matches the pins, so the manifest now
+points there. Both datasets are third-party and could be deleted before the deadline; a private mirror of each is a
+cheap insurance step (ARC-111). The same probe showed: offline venv build 21 s, full model hash check about 175 s, both
+passing (model files verified).

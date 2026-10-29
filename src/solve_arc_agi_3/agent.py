@@ -277,18 +277,59 @@ the goal is unclear. When it is clear, choose a short safe move. Use the Python 
 action with one available action name. Never assume state carries between games."""
 
 
-class BaselineAgentCore:
-    """Provider-independent prompt, model call, and action parsing."""
+HISTORY_LINES = 40
 
-    def __init__(self, client: InferenceClient) -> None:
+
+def _changed_cells(
+    before: tuple[tuple[int, ...], ...], after: tuple[tuple[int, ...], ...]
+) -> int:
+    if len(before) != len(after):
+        return -1
+    return sum(
+        1
+        for row_before, row_after in zip(before, after, strict=True)
+        for a, b in zip(row_before, row_after, strict=False)
+        if a != b
+    )
+
+
+class BaselineAgentCore:
+    """Provider-independent prompt, model call, and action parsing.
+
+    Context stays bounded: every call is the system prompt plus one user message holding a
+    short text history (what was tried and what it changed) and the *current* observation in
+    full. Old frames and images are never resent, so a long game cannot overflow the model's
+    context window.
+    """
+
+    def __init__(
+        self, client: InferenceClient, *, history_lines: int = HISTORY_LINES
+    ) -> None:
         self._client = client
-        self._conversation: list[ChatMessage] = [
-            ChatMessage(role="system", content=SYSTEM_PROMPT)
-        ]
+        self._history_lines = history_lines
+        self._history: list[str] = []
+        self._pending: str | None = None
+        self._previous: Observation | None = None
+        self._steps = 0
 
     @property
-    def conversation(self) -> tuple[ChatMessage, ...]:
-        return tuple(self._conversation)
+    def history(self) -> tuple[str, ...]:
+        return tuple(self._history)
+
+    def _settle_pending(self, observation: Observation) -> None:
+        """Turn the last action into a history line now that its result is visible."""
+
+        if self._pending is None or self._previous is None:
+            return
+        changed = _changed_cells(self._previous.grid, observation.grid)
+        gained = observation.levels_completed - self._previous.levels_completed
+        effect = "grid size changed" if changed < 0 else f"{changed} cells changed"
+        level = f", levels +{gained}" if gained > 0 else ""
+        self._history.append(
+            f"{self._steps}. {self._pending} -> {observation.state}, {effect}{level}"
+        )
+        del self._history[: -self._history_lines]
+        self._pending = None
 
     def request_completion(
         self, observation: Observation
@@ -301,6 +342,7 @@ class BaselineAgentCore:
         is the step that can raise.
         """
 
+        self._settle_pending(observation)
         observation_payload = observation.model_dump(mode="json")
         observation_payload["ascii_grid"] = "\n".join(
             "".join("0123456789ABCDEF"[cell] for cell in row)
@@ -311,8 +353,12 @@ class BaselineAgentCore:
             separators=(",", ":"),
             sort_keys=True,
         )
+        history_text = "\n".join(self._history) or "(no actions yet)"
         content_parts: list[TextContentPart | ImageContentPart] = [
-            TextContentPart(text=serialized_observation)
+            TextContentPart(
+                text=f"Recent actions and their effects:\n{history_text}\n\n"
+                f"Current observation:\n{serialized_observation}"
+            )
         ]
         image_url = grid_png_data_url(observation.grid)
         if image_url is not None:
@@ -324,10 +370,11 @@ class BaselineAgentCore:
             content=tuple(content_parts),
         )
         request = InferenceRequest(
-            messages=(*self._conversation, user_message), tools=(PYTHON_TOOL,)
+            messages=(ChatMessage(role="system", content=SYSTEM_PROMPT), user_message),
+            tools=(PYTHON_TOOL,),
         )
         response = self._client.complete(request)
-        self._conversation = list(request.messages)
+        self._previous = observation
         return request, response
 
     def record_decision(
@@ -343,12 +390,9 @@ class BaselineAgentCore:
         decision = parse_action_decision(
             response, available_actions=observation.available_actions
         )
-        self._conversation.append(
-            ChatMessage(
-                role="assistant",
-                content=response.content or f"Selected {decision.name} via tool.",
-            )
-        )
+        self._steps += 1
+        coords = f" at {decision.data}" if decision.data else ""
+        self._pending = f"{decision.name}{coords}"
         return decision
 
     def choose(self, observation: Observation) -> AgentTurn:
