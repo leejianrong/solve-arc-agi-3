@@ -193,8 +193,24 @@ def agent_class_from_env(base: type) -> type:
         model_dir=Path("/unused/model"),
         wheelhouse_dir=Path("/unused/wheelhouse"),
     )
-    return make_agent_class(
-        base,
-        limits=RunLimits.from_env(),
-        client=OpenAICompatibleClient(config.inference),
+    # Tunables for the Kaggle run: the pinned 4096-token / 120 s budget cannot finish a thinking answer at
+    # ~25 tokens/s per stream (the first dry runs: 354 of 506 steps timed out or ran out of tokens).
+    inference = config.inference.model_copy(
+        update={
+            "max_output_tokens": int(
+                os.environ.get(
+                    "ARC3_MAX_OUTPUT_TOKENS", config.inference.max_output_tokens
+                )
+            ),
+            "request_timeout_seconds": float(
+                os.environ.get(
+                    "ARC3_REQUEST_TIMEOUT", config.inference.request_timeout_seconds
+                )
+            ),
+            "sampling": config.inference.sampling.model_copy(
+                update={"thinking": os.environ.get("ARC3_THINKING", "1") == "1"}
+            ),
+        }
     )
+    client = LoggingClient(OpenAICompatibleClient(inference))
+    return make_agent_class(base, limits=RunLimits.from_env(), client=client)

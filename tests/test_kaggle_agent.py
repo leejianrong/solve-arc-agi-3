@@ -180,3 +180,27 @@ def test_logging_client_reports_sample_replies_and_stats(caplog: object) -> None
         client.complete(request)
     text = caplog.text  # type: ignore[attr-defined]
     assert "model sample #1" in text and "model stats: 2 calls" in text
+
+
+def test_agent_class_from_env_applies_the_run_tunables(monkeypatch: object) -> None:
+    from solve_arc_agi_3.kaggle_agent import LoggingClient, agent_class_from_env
+
+    root = Path(__file__).parents[1]
+    env = {
+        "ARC3_MANIFEST": str(root / "configs/baselines/duck-control-v1.json"),
+        "ARC3_DEADLINE_EPOCH": str(time.time() + 60),
+        "ARC3_THINKING": "0",
+        "ARC3_MAX_OUTPUT_TOKENS": "777",
+        "ARC3_REQUEST_TIMEOUT": "55",
+    }
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)  # type: ignore[attr-defined]
+    cls = agent_class_from_env(Base)
+    client = cls().__dict__["_adapter"]._core._client
+    assert isinstance(client, LoggingClient)
+    config = client._inner.config
+    assert (
+        config.max_output_tokens,
+        config.request_timeout_seconds,
+        config.sampling.thinking,
+    ) == (777, 55.0, False)

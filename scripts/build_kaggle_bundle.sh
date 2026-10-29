@@ -22,3 +22,17 @@ if kaggle datasets status "$SLUG" >/dev/null 2>&1; then
 else
   kaggle datasets create -p "$OUT" --dir-mode zip
 fi
+
+# A kernel started before the new version is visible would silently run stale code: wait until the published
+# GIT_COMMIT matches what was just built.
+want="$(cat "$OUT/GIT_COMMIT")"
+tmp="$(mktemp -d)"
+for _ in $(seq 1 60); do
+  rm -f "$tmp"/GIT_COMMIT*
+  kaggle datasets download "$SLUG" -f GIT_COMMIT -p "$tmp" --force -q >/dev/null 2>&1 || true
+  [ -f "$tmp/GIT_COMMIT.zip" ] && unzip -qo "$tmp/GIT_COMMIT.zip" -d "$tmp" 2>/dev/null
+  if [ -f "$tmp/GIT_COMMIT" ] && [ "$(cat "$tmp/GIT_COMMIT")" = "$want" ]; then echo "bundle published: $want"; exit 0; fi
+  sleep 5
+done
+echo "bundle version with commit $want not visible after 5 minutes" >&2
+exit 1
