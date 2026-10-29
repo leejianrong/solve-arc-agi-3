@@ -55,6 +55,13 @@ class RunLimits:
     def expired(self, now: float | None = None) -> bool:
         return (time.time() if now is None else now) >= self.deadline_epoch
 
+    def failed(self) -> bool:
+        """The notebook writes ``<ready_flag>.failed`` when the model server could not start."""
+
+        return (
+            self.ready_flag is not None and Path(self.ready_flag + ".failed").exists()
+        )
+
     def ready(self) -> bool:
         return self.ready_flag is None or Path(self.ready_flag).exists()
 
@@ -62,7 +69,7 @@ class RunLimits:
         """Block until the model server is up; False if the deadline passed first."""
 
         while not self.ready():
-            if self.expired():
+            if self.expired() or self.failed():
                 return False
             time.sleep(poll_seconds)
         return True

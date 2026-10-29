@@ -26,7 +26,7 @@ from env import VENV, build_venv, find_dataset, log, run, runtime_env  # noqa: E
 START = time.time()
 RERUN = os.getenv("KAGGLE_IS_COMPETITION_RERUN", "").strip().lower() in {"1", "true"}
 HARD_LIMIT_S = 9 * 3600
-PLAY_UNTIL_S = int(os.getenv("ARC3_PLAY_SECONDS", str(8 * 3600 + 30 * 60 if RERUN else 25 * 60)))
+PLAY_UNTIL_S = int(os.getenv("ARC3_PLAY_SECONDS", str(8 * 3600 + 30 * 60 if RERUN else 55 * 60)))
 GRACE_S = 15 * 60  # time for the agents to finish and the scorecard to close after the deadline
 
 BUNDLE = find_dataset("solve-arc-agi-3-src")
@@ -50,17 +50,60 @@ def write_summary() -> None:
     SUMMARY.write_text(json.dumps(summary, indent=2, default=str))
 
 
-# 1. Environment: py3.12 venv from the pinned wheelhouse, plus the competition's own wheels (arc_agi).
-build_venv(WHEELS)
-comp_wheels = COMP / "arc_agi_3_wheels"
-run(
-    ["uv", "pip", "install", "--python", str(VENV / "bin/python"), "--no-index",
-     "--find-links", str(comp_wheels), "arc-agi", "python-dotenv"],
-    check=False,
-)
-summary["venv_ready_s"] = round(time.time() - START)
-env = runtime_env(BUNDLE)
+# 1+2. Venv, model server and readiness flag, all in the background: on a cold mount the venv alone took 22 minutes
+#      and the model 8 more, while Kaggle wants an action inside 15. The games do not wait for any of it.
+server: subprocess.Popen[bytes] | None = None
+server_env = runtime_env(BUNDLE)
+py = str(VENV / "bin/python")
+FAILED = Path(str(READY) + ".failed")
+
+
+def boot() -> None:
+    global server
+    try:
+        build_venv(WHEELS)
+        summary["venv_ready_s"] = round(time.time() - START)
+        manifest = str(BUNDLE / "configs/baselines/duck-control-v1.json")
+        # Quick preflight in the rerun (sizes and checksum manifest); the full 36 GB hash check is part of the
+        # dry run only, to save about three minutes.
+        cmd = [py, "-m", "solve_arc_agi_3", "serve", "--manifest", manifest, "--model-dir", str(MODEL),
+               "--wheelhouse-dir", str(WHEELS), "--run-dir", str(RUN_DIR)]
+        if os.getenv("ARC3_FULL_PREFLIGHT", "0" if RERUN else "1") == "1":
+            cmd.append("--full")
+        server = subprocess.Popen(cmd, env=server_env, start_new_session=True)
+        t = time.time()
+        while server.poll() is None:
+            try:
+                with urllib.request.urlopen("http://127.0.0.1:1234/v1/models", timeout=5) as r:
+                    if r.status == 200:
+                        break
+            except Exception:
+                pass
+            time.sleep(5)
+        else:
+            raise RuntimeError(f"vLLM exited before it was ready (code {server.poll()})")
+        body = json.dumps({"model": "vrfai/Qwen3.6-27B-FP8", "messages": [{"role": "user", "content": "ok"}], "max_tokens": 8}).encode()
+        try:  # warm-up so the first real call does not pay for graph capture
+            urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:1234/v1/chat/completions", body, {"Content-Type": "application/json"}), timeout=300).read()
+        except Exception as exc:
+            log(f"warm-up request failed: {exc}")
+        READY.write_text("ready")
+        summary["model_ready_s"] = round(time.time() - START)
+        log(f"model ready: {time.time() - t:.0f}s of serving, T+{time.time() - START:.0f}s")
+    except Exception as exc:
+        FAILED.write_text(str(exc))
+        summary["boot_error"] = str(exc)
+        log(f"BOOT FAILED, games will use fallback moves: {exc}")
+
+
+threading.Thread(target=boot, daemon=True).start()
+
+# The agents run on the system python (as in the official starter) so they never wait for the venv.
+run([sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "--no-index",
+     "--find-links", str(COMP / "arc_agi_3_wheels"), "arc-agi", "python-dotenv"], check=False)
+env = dict(os.environ)
 env.update(
+    PYTHONPATH=str(BUNDLE),
     ARC3_MANIFEST=str(BUNDLE / "configs/baselines/duck-control-v1.json"),
     ARC3_DEADLINE_EPOCH=str(START + PLAY_UNTIL_S),
     ARC3_READY_FLAG=str(READY),
@@ -68,42 +111,6 @@ env.update(
     ARC3_MAX_ACTIONS=os.getenv("ARC3_MAX_ACTIONS", "1500"),
     MPLBACKEND="agg",
 )
-py = str(VENV / "bin/python")
-
-# 2. Model server in the background. Quick preflight (sizes and checksum manifest) here; the full
-#    36 GB hash check is part of the dry run only, because it costs about three minutes of the 15.
-serve_cmd = [py, "-m", "solve_arc_agi_3", "serve", "--manifest", env["ARC3_MANIFEST"],
-             "--model-dir", str(MODEL), "--wheelhouse-dir", str(WHEELS), "--run-dir", str(RUN_DIR)]
-if os.getenv("ARC3_FULL_PREFLIGHT", "0" if RERUN else "1") == "1":
-    serve_cmd.append("--full")
-server = subprocess.Popen(serve_cmd, env=env, start_new_session=True)
-
-
-def watch_server() -> None:
-    t = time.time()
-    while server.poll() is None:
-        try:
-            with urllib.request.urlopen("http://127.0.0.1:1234/v1/models", timeout=5) as r:
-                if r.status == 200:
-                    break
-        except Exception:
-            pass
-        time.sleep(5)
-    else:
-        summary["server_exit"] = server.poll()
-        log(f"vLLM exited before becoming ready (code {server.poll()})")
-        return
-    body = json.dumps({"model": "vrfai/Qwen3.6-27B-FP8", "messages": [{"role": "user", "content": "ok"}], "max_tokens": 8}).encode()
-    try:  # warm-up request so the first real call does not pay for graph capture
-        urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:1234/v1/chat/completions", body, {"Content-Type": "application/json"}), timeout=300).read()
-    except Exception as exc:
-        log(f"warm-up request failed: {exc}")
-    READY.write_text("ready")
-    summary["model_ready_s"] = round(time.time() - START)
-    log(f"model ready after {time.time() - t:.0f}s of serving (T+{time.time() - START:.0f}s)")
-
-
-threading.Thread(target=watch_server, daemon=True).start()
 
 # 3. The official agents repo with our agent plugged in.
 if AGENTS.exists():
@@ -134,11 +141,11 @@ try:
         )
         run(["curl", "--fail", "--retry", "999", "--retry-all-errors", "--retry-delay", "5",
              "--retry-max-time", "600", "http://gateway:8001/api/games"], check=False)
-        cmd = [py, "main.py", "--agent", "myagent"]
+        cmd = [sys.executable, "main.py", "--agent", "myagent"]
     else:
         env.update(OPERATION_MODE="offline", ENVIRONMENTS_DIR=str(COMP / "environment_files"),
                    RECORDINGS_DIR=str(WORK / "recordings"), ARC3_DRY_GAMES=os.getenv("ARC3_DRY_GAMES", "6"))
-        cmd = [py, str(BUNDLE / "run/dry_runner.py")]
+        cmd = [sys.executable, str(BUNDLE / "run/dry_runner.py")]
     summary["agents_started_s"] = round(time.time() - START)
     log(f"starting agents (T+{time.time() - START:.0f}s): {' '.join(cmd)}")
     agent_proc = subprocess.Popen(cmd, cwd=AGENTS, env=env)
@@ -150,11 +157,12 @@ try:
         agent_proc.terminate()
     summary["agents_exit"] = agent_proc.poll()
 finally:
-    server.terminate()
-    try:
-        server.wait(60)
-    except subprocess.TimeoutExpired:
-        server.kill()
+    if server is not None:
+        server.terminate()
+        try:
+            server.wait(60)
+        except subprocess.TimeoutExpired:
+            server.kill()
     for f in sorted(RUN_DIR.glob("*.log"))[-2:]:
         shutil.copy(f, WORK / f"vllm-{f.name}")
     if not RERUN:  # the starter writes this placeholder in non-rerun mode; keeps the output valid

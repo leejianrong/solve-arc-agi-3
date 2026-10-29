@@ -152,3 +152,16 @@ def test_wait_gives_up_at_the_deadline(tmp_path: Path) -> None:
         deadline_epoch=time.time() + 0.2, ready_flag=str(tmp_path / "never")
     )
     assert lim.wait_ready(poll_seconds=0.05) is False
+
+
+def test_failed_boot_degrades_to_fallback_moves_instead_of_hanging(
+    tmp_path: Path,
+) -> None:
+    flag = tmp_path / "ready"
+    (tmp_path / "ready.failed").write_text("vllm exited")
+    lim = RunLimits(deadline_epoch=time.time() + 3600, ready_flag=str(flag))
+    agent = make_agent_class(
+        Base, limits=lim, client=OkClient(), action_mapper=mapper
+    )()
+    move = agent.choose_action([Frame()], Frame())
+    assert move.source == "fallback"

@@ -35,26 +35,32 @@ def run(cmd: list[str], *, env: dict[str, str] | None = None, check: bool = True
     return proc.returncode
 
 
-def libcuda_link_dir() -> str:
-    """A directory holding a linkable ``libcuda.so``.
+NVIDIA_LIB = Path("/usr/local/nvidia/lib64")  # the image's driver library dir (also on LD_LIBRARY_PATH)
 
-    FlashInfer JIT-compiles Blackwell kernels and its final link step needs ``-lcuda``. Kaggle's image
-    has the driver's ``libcuda.so.1`` but no ``libcuda.so`` dev symlink, so the link fails ("cannot find
-    -lcuda") after every kernel compiled fine. Point a symlink at the real driver library.
+
+def libcuda_link_dir() -> str:
+    """Directory holding a linkable ``libcuda.so``, for FlashInfer's JIT link step.
+
+    FlashInfer compiles Blackwell kernels at first use and links them with ``-lcuda``. Kaggle puts the driver
+    in /usr/local/nvidia/lib64 (on LD_LIBRARY_PATH, so runtime works) but LIBRARY_PATH, which the linker
+    reads, points at a CUDA ``stubs`` directory that does not exist, so the final link failed with "cannot
+    find -lcuda" after every kernel compiled. Measured with kaggle/probe/probe.py.
     """
 
+    if (NVIDIA_LIB / "libcuda.so").exists():
+        return str(NVIDIA_LIB)
     link_dir = Path("/tmp/libcuda-link")
     link_dir.mkdir(exist_ok=True)
-    found = subprocess.run("ldconfig -p | grep -m1 'libcuda.so.1'", shell=True, capture_output=True, text=True).stdout
+    found = subprocess.run(
+        "ldconfig -p | grep -m1 'libcuda.so.1'", shell=True, capture_output=True, text=True
+    ).stdout
     target = found.split("=>")[-1].strip() if "=>" in found else ""
-    stubs = CUDA / "lib64/stubs/libcuda.so"
-    source = target or (str(stubs) if stubs.exists() else "")
-    log(f"libcuda: driver={target or 'not found'} stubs={'yes' if stubs.exists() else 'no'}")
-    if source:
+    if target:
         link = link_dir / "libcuda.so"
         if link.is_symlink() or link.exists():
             link.unlink()
-        link.symlink_to(source)
+        link.symlink_to(target)
+    log(f"libcuda link dir: {link_dir} (driver {target or 'not found'})")
     return str(link_dir)
 
 
