@@ -122,3 +122,17 @@ def test_openrouter_request_explicitly_enables_reasoning(
     )
 
     assert server.requests[0]["reasoning"] == {"enabled": True}
+
+
+def test_local_vllm_thinking_is_a_per_request_switch(tmp_path: Path) -> None:
+    config = _fake_config(tmp_path).model_copy(update={"provider": Provider.LOCAL_VLLM})
+    request = InferenceRequest(messages=(ChatMessage(role="user", content="x"),))
+
+    on = OpenAICompatibleClient(config)._request_body(request)
+    assert "chat_template_kwargs" not in on  # server default: thinking on
+
+    no_think = config.model_copy(
+        update={"sampling": config.sampling.model_copy(update={"thinking": False})}
+    )
+    off = OpenAICompatibleClient(no_think)._request_body(request)
+    assert off["chat_template_kwargs"] == {"enable_thinking": False}

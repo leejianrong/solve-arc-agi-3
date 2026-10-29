@@ -8,6 +8,7 @@ from pathlib import Path
 
 from solve_arc_agi_3.agent import ActionDecision
 from solve_arc_agi_3.inference import (
+    ChatMessage,
     FunctionCall,
     InferenceRequest,
     InferenceResponse,
@@ -165,3 +166,17 @@ def test_failed_boot_degrades_to_fallback_moves_instead_of_hanging(
     )()
     move = agent.choose_action([Frame()], Frame())
     assert move.source == "fallback"
+
+
+def test_logging_client_reports_sample_replies_and_stats(caplog: object) -> None:
+    import logging
+
+    from solve_arc_agi_3.kaggle_agent import LoggingClient
+
+    client = LoggingClient(OkClient(), samples=1, every=2)
+    request = InferenceRequest(messages=(ChatMessage(role="user", content="x"),))
+    with caplog.at_level(logging.INFO):  # type: ignore[attr-defined]
+        client.complete(request)
+        client.complete(request)
+    text = caplog.text  # type: ignore[attr-defined]
+    assert "model sample #1" in text and "model stats: 2 calls" in text

@@ -25,7 +25,7 @@ from .agent import (
     _state_text,
     default_arcengine_action_mapper,
 )
-from .inference import InferenceClient
+from .inference import InferenceClient, InferenceRequest, InferenceResponse
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +132,51 @@ def make_agent_class(
 
     SubmissionAgent.__name__ = "MyAgent"
     return SubmissionAgent
+
+
+class LoggingClient:
+    """Wraps a client to log sample replies and rolling stats (tokens, latency, empty answers)."""
+
+    def __init__(
+        self, inner: InferenceClient, *, samples: int = 12, every: int = 50
+    ) -> None:
+        self._inner = inner
+        self._samples = samples
+        self._every = every
+        self._lock = threading.Lock()
+        self._calls = 0
+        self._tokens = 0
+        self._seconds = 0.0
+        self._no_tool = 0
+
+    def complete(self, request: InferenceRequest) -> InferenceResponse:
+        response = self._inner.complete(request)
+        with self._lock:
+            self._calls += 1
+            self._tokens += response.usage.completion_tokens
+            self._seconds += response.elapsed_seconds
+            self._no_tool += 0 if response.tool_calls else 1
+            n = self._calls
+            if n <= self._samples:
+                calls = [c.function.arguments[:200] for c in response.tool_calls]
+                logger.info(
+                    "model sample #%d: %.0fs, %d completion tokens, tool_calls=%s content=%r reasoning=%r",
+                    n,
+                    response.elapsed_seconds,
+                    response.usage.completion_tokens,
+                    calls,
+                    response.content[:200],
+                    (response.reasoning or "")[-200:],
+                )
+            if n % self._every == 0:
+                logger.info(
+                    "model stats: %d calls, mean %.0f completion tokens, mean %.1fs, %.0f%% without a tool call",
+                    n,
+                    self._tokens / n,
+                    self._seconds / n,
+                    100 * self._no_tool / n,
+                )
+        return response
 
 
 def agent_class_from_env(base: type) -> type:

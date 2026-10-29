@@ -26,7 +26,7 @@ from env import VENV, build_venv, find_dataset, log, run, runtime_env  # noqa: E
 START = time.time()
 RERUN = os.getenv("KAGGLE_IS_COMPETITION_RERUN", "").strip().lower() in {"1", "true"}
 HARD_LIMIT_S = 9 * 3600
-PLAY_UNTIL_S = int(os.getenv("ARC3_PLAY_SECONDS", str(8 * 3600 + 30 * 60 if RERUN else 55 * 60)))
+PLAY_UNTIL_S = int(os.getenv("ARC3_PLAY_SECONDS", str(8 * 3600 + 30 * 60 if RERUN else 45 * 60)))
 GRACE_S = 15 * 60  # time for the agents to finish and the scorecard to close after the deadline
 
 BUNDLE = find_dataset("solve-arc-agi-3-src")
@@ -109,6 +109,11 @@ env.update(
     ARC3_READY_FLAG=str(READY),
     ARC3_MAX_CONCURRENT_CALLS=os.getenv("ARC3_MAX_CONCURRENT_CALLS", "32"),
     ARC3_MAX_ACTIONS=os.getenv("ARC3_MAX_ACTIONS", "1500"),
+    # Thinking off and a short answer by default: with thinking on, an answer needs >4096 tokens, which at ~25
+    # tokens/s per stream exceeds the request timeout (first dry run: 354 of 506 steps fell back).
+    ARC3_THINKING=os.getenv("ARC3_THINKING", "0"),
+    ARC3_MAX_OUTPUT_TOKENS=os.getenv("ARC3_MAX_OUTPUT_TOKENS", "1024"),
+    ARC3_REQUEST_TIMEOUT=os.getenv("ARC3_REQUEST_TIMEOUT", "180"),
     MPLBACKEND="agg",
 )
 
@@ -144,7 +149,7 @@ try:
         cmd = [sys.executable, "main.py", "--agent", "myagent"]
     else:
         env.update(OPERATION_MODE="offline", ENVIRONMENTS_DIR=str(COMP / "environment_files"),
-                   RECORDINGS_DIR=str(WORK / "recordings"), ARC3_DRY_GAMES=os.getenv("ARC3_DRY_GAMES", "6"))
+                   RECORDINGS_DIR=str(WORK / "recordings"), ARC3_DRY_GAMES=os.getenv("ARC3_DRY_GAMES", "12"))
         cmd = [sys.executable, str(BUNDLE / "run/dry_runner.py")]
     summary["agents_started_s"] = round(time.time() - START)
     log(f"starting agents (T+{time.time() - START:.0f}s): {' '.join(cmd)}")
