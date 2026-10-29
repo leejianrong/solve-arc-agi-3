@@ -56,3 +56,21 @@ deletion. The mirror `mirzamilanfarabi/arc3-vllm-h100-wheelhouse-v3` (2026-09-20
 points there. Both datasets are third-party and could be deleted before the deadline; a private mirror of each is a
 cheap insurance step (ARC-111). The same probe showed: offline venv build 21 s, full model hash check about 175 s, both
 passing (model files verified).
+
+## Dry runs on Kaggle (offline, public games from the competition mount, `NvidiaRtxPro6000`)
+
+Notebook `leejianrong/arc3-duck-qwen`, source dataset `leejianrong/solve-arc-agi-3-src`. Games start at T+4 s on the system
+Python while the venv and vLLM boot in a background thread (model ready at T+544 to 689 s; the venv took 25 to 62 s except
+once, 22 minutes, on a cold mount).
+
+| Run | Settings | Steps | Fallback steps | Levels | Notes |
+|---|---|---|---|---|---|
+| 1 (6 games) | thinking on, 4096 tokens, 120 s | 506 | 354 (190 timeouts, 164 no action) | 0 | thinking answers need more than 4096 tokens at about 25 tok/s per stream |
+| 2 (12 games) | invalid: the tunables silently did not apply | 642 | 484 | 0 | same failure as run 1; fixed, test added |
+| 3 (12 games) | thinking off, 1024 tokens, 180 s | 1602 | 364 (no valid action) | 0 | 0% replies without a tool call, mean 292 tokens and 30 s per call |
+
+Throughput measured by the serve probe: 39 tok/s for one stream, 270 aggregate at 8, 780 at 32 (24 per stream); KV cache 178k tokens.
+
+What the clean-room agent still cannot do: it repeats `action(1)`, click-only games (`ft09`, `lp85`) need ACTION6 coordinates it
+rarely supplies, and its history is only a changed-cell count. It has not cleared a level in any run. A rerun through the
+real gateway has not been exercised yet; only a real submission does that.
