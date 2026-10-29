@@ -35,11 +35,36 @@ def run(cmd: list[str], *, env: dict[str, str] | None = None, check: bool = True
     return proc.returncode
 
 
+def libcuda_link_dir() -> str:
+    """A directory holding a linkable ``libcuda.so``.
+
+    FlashInfer JIT-compiles Blackwell kernels and its final link step needs ``-lcuda``. Kaggle's image
+    has the driver's ``libcuda.so.1`` but no ``libcuda.so`` dev symlink, so the link fails ("cannot find
+    -lcuda") after every kernel compiled fine. Point a symlink at the real driver library.
+    """
+
+    link_dir = Path("/tmp/libcuda-link")
+    link_dir.mkdir(exist_ok=True)
+    found = subprocess.run("ldconfig -p | grep -m1 'libcuda.so.1'", shell=True, capture_output=True, text=True).stdout
+    target = found.split("=>")[-1].strip() if "=>" in found else ""
+    stubs = CUDA / "lib64/stubs/libcuda.so"
+    source = target or (str(stubs) if stubs.exists() else "")
+    log(f"libcuda: driver={target or 'not found'} stubs={'yes' if stubs.exists() else 'no'}")
+    if source:
+        link = link_dir / "libcuda.so"
+        if link.is_symlink() or link.exists():
+            link.unlink()
+        link.symlink_to(source)
+    return str(link_dir)
+
+
 def runtime_env(bundle: Path) -> dict[str, str]:
     env = dict(os.environ)
+    link_dir = libcuda_link_dir()
     env.update(
         PATH=f"{VENV}/bin:{CUDA}/bin:{env.get('PATH', '')}",
         CUDA_HOME=str(CUDA),
+        LIBRARY_PATH=f"{link_dir}:{CUDA}/lib64:{env.get('LIBRARY_PATH', '')}",
         PYTHONPATH=str(bundle),
         HF_HUB_OFFLINE="1",
         TRANSFORMERS_OFFLINE="1",
