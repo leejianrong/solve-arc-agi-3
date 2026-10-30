@@ -74,3 +74,12 @@ Throughput measured by the serve probe: 39 tok/s for one stream, 270 aggregate a
 What the clean-room agent still cannot do: it repeats `action(1)`, click-only games (`ft09`, `lp85`) need ACTION6 coordinates it
 rarely supplies, and its history is only a changed-cell count. It has not cleared a level in any run. A rerun through the
 real gateway has not been exercised yet; only a real submission does that.
+
+## Submission 1 (2026-10-30)
+
+- Kaggle submission ref **57788190**, from `leejianrong/arc3-duck-qwen` version 4, bundle commit `c16d400`.
+- Settings: Qwen3.6 27B FP8 + vLLM 0.19.0, clean-room single-step agent, thinking off, 1024 output tokens, 180 s timeout,
+  32 concurrent model calls, deadline 8h30m after start. The commit run (non-rerun) took 1534 s and finished cleanly.
+- **Daily limit: one submission per day** (the CLI reported "0 submissions remaining today" right after this one).
+  Deadline 2026-11-02 23:59, so at most the slots of Oct 31, Nov 1 and Nov 2, and a nine-hour run must start early enough.
+- Expected score is near 0; the goal of this submission is to exercise the real gateway path.
