@@ -18,4 +18,8 @@ games = games[:want]
 print("dry-run games:", games, flush=True)
 card = Swarm("myagent", "http://unused", games).main()
 if card is not None:
-    print("SCORECARD", json.dumps(card.model_dump(), default=str)[:6000], flush=True)
+    dump = json.dumps(card.model_dump(), default=str)
+    out = os.environ.get("ARC3_SCORECARD_OUT")
+    if out:  # the full scorecard, for tooling; the log line below stays short
+        Path(out).write_text(dump)
+    print("SCORECARD", dump[:6000], flush=True)

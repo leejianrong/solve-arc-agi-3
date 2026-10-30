@@ -1,0 +1,3 @@
+[
+  {"id": "base-c16d400", "seconds": 600, "env": {"ARC3_THINKING": "0", "ARC3_MAX_OUTPUT_TOKENS": "1024", "ARC3_REQUEST_TIMEOUT": "180", "ARC3_DRY_GAMES": "12"}}
+]

@@ -11,6 +11,7 @@ from pathlib import Path
 INPUT = Path("/kaggle/input")
 VENV = Path("/tmp/arc3-venv")  # /kaggle/working is only 20 GB; /tmp has ~1 TB
 CUDA = Path("/usr/local/cuda")
+PY312 = os.environ.get("ARC3_PY312", "/usr/bin/python3.12")  # RunPod images may differ from Kaggle
 
 
 def log(msg: str) -> None:
@@ -84,7 +85,7 @@ def build_venv(wheelhouse: Path) -> None:
     if (VENV / "bin" / "vllm").exists():
         log("venv already built")
         return
-    run(["uv", "venv", "--python", "/usr/bin/python3.12", str(VENV)])
+    run(["uv", "venv", "--python", PY312, str(VENV)])
     run(
         [
             "uv", "pip", "install", "--python", str(VENV / "bin" / "python"),
