@@ -76,11 +76,15 @@ class RunLimits:
 
 
 def fallback_decision(available_actions: tuple[int, ...], step: int) -> ActionDecision:
-    """Deterministic non-RESET move that cycles through what the game offers."""
+    """Deterministic non-RESET move that cycles through what the game offers.
+
+    Clicks scan the grid (co-prime strides) instead of repeating one cell, so click-only games at least
+    probe different places.
+    """
 
     choices = [a for a in available_actions if a != 0] or [1]
     action_id = choices[step % len(choices)]
-    data = {"x": 32, "y": 32} if action_id == 6 else {}
+    data = {"x": (step * 13) % 64, "y": (step * 29) % 64} if action_id == 6 else {}
     return ActionDecision(name=f"ACTION{action_id}", data=data, source="fallback")
 
 

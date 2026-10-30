@@ -114,9 +114,10 @@ def test_concurrent_model_calls_are_capped_across_all_games() -> None:
     assert 1 < client.peak <= 3
 
 
-def test_fallback_clicks_the_centre_for_action6() -> None:
-    d = fallback_decision((6,), 0)
-    assert d.name == "ACTION6" and d.data == {"x": 32, "y": 32}
+def test_fallback_scans_the_grid_for_click_only_games() -> None:
+    points = {tuple(fallback_decision((6,), i).data.values()) for i in range(40)}
+    assert len(points) == 40  # a different cell each time
+    assert all(0 <= v <= 63 for p in points for v in p)
 
 
 def test_limits_from_env() -> None:

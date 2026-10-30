@@ -26,7 +26,7 @@ from env import VENV, build_venv, find_dataset, log, run, runtime_env  # noqa: E
 START = time.time()
 RERUN = os.getenv("KAGGLE_IS_COMPETITION_RERUN", "").strip().lower() in {"1", "true"}
 HARD_LIMIT_S = 9 * 3600
-PLAY_UNTIL_S = int(os.getenv("ARC3_PLAY_SECONDS", str(8 * 3600 + 30 * 60 if RERUN else 45 * 60)))
+PLAY_UNTIL_S = int(os.getenv("ARC3_PLAY_SECONDS", str(8 * 3600 + 30 * 60 if RERUN else 25 * 60)))
 GRACE_S = 15 * 60  # time for the agents to finish and the scorecard to close after the deadline
 
 BUNDLE = find_dataset("solve-arc-agi-3-src")
