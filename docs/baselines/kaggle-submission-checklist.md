@@ -68,7 +68,13 @@ once, 22 minutes, on a cold mount).
 | 1 (6 games) | thinking on, 4096 tokens, 120 s | 506 | 354 (190 timeouts, 164 no action) | 0 | thinking answers need more than 4096 tokens at about 25 tok/s per stream |
 | 2 (12 games) | invalid: the tunables silently did not apply | 642 | 484 | 0 | same failure as run 1; fixed, test added |
 | 3 (12 games) | thinking off, 1024 tokens, 180 s | 1602 | 364 (no valid action) | 0 | 0% replies without a tool call, mean 292 tokens and 30 s per call |
-| 5 (12 games, agent v5, bundle 0881698) | thinking off, 1024 tokens, 180 s | 3880 | 22 of about 1800 calls (1%) | 1 (`lp85` level 1) | scorecard 0.0346; mean 124 tokens and 11.5 s per call; prose-only replies were the remaining failures |
+| 5 (12 games, agent v5, bundle 0881698) | thinking off, 1024 tokens, 180 s | 1928 (recordings) | 11 of about 1800 calls (0.6%) | 1 (`lp85` level 1) | scorecard 0.0346; mean 124 tokens and 11.5 s per call; prose-only replies were the remaining failures; 1.07 moves per model call, so multi-move plans are almost never used |
+
+**Correction (2026-10-31):** the Kaggle log prints every agent line twice (two logging handlers), so action and fallback
+counts taken from log lines are doubled. Ground truth for run 5 is the recordings: 1,928 actions and 11 distinct fallbacks
+(this table first said 3,880 and 22). Runs 1 and 3 were counted the same way from log lines, so their absolute counts are
+doubled too (their rates against actions are unaffected). Model-call counts and per-call stats come from an internal
+counter and are correct.
 
 Throughput measured by the serve probe: 39 tok/s for one stream, 270 aggregate at 8, 780 at 32 (24 per stream); KV cache 178k tokens.
 
