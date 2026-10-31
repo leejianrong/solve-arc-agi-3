@@ -8,6 +8,7 @@ in docs/TRACE.md.
 
 from __future__ import annotations
 
+import inspect
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -38,7 +39,15 @@ class Transition:
     state_after: str
 
 
+History = Sequence[tuple[Grid, Move]]
+"""Prior transitions of the current level, oldest first: each item is the frame a move was played from and
+that move. The frame the move led to is the next item's frame (or the frame being predicted from)."""
+
+
 class WorldModel(Protocol):
+    """`predict(frame, move)`, optionally `predict(frame, move, history)` for games whose next frame depends
+    on hidden state (see `takes_history`)."""
+
     def predict(self, frame: Grid, move: Move) -> Grid: ...
 
 
@@ -46,6 +55,32 @@ class GoalModel(WorldModel, Protocol):
     """A world model that can also say whether a frame is a goal state (ADR-0013)."""
 
     def is_goal(self, frame: Grid) -> bool: ...
+
+
+def takes_history(model: object) -> bool:
+    """True when the model's `predict` wants the optional third `history` argument. A model may set a
+    `takes_history` attribute (the sandbox does, from the source); otherwise the signature decides: a third
+    positional parameter or `*args`. Never raises."""
+    declared = getattr(model, "takes_history", None)
+    if isinstance(declared, bool):
+        return declared
+    try:
+        params = list(inspect.signature(model.predict).parameters.values())  # type: ignore[attr-defined]
+    except (TypeError, ValueError, AttributeError):
+        return False
+    positional = [
+        p for p in params if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+    ]
+    return len(positional) >= 3 or any(p.kind is p.VAR_POSITIONAL for p in params)
+
+
+def call_predict(
+    model: WorldModel, frame: Grid, move: Move, history: History | None = None
+) -> Grid:
+    """`model.predict`, with `history` passed only to models that take it."""
+    if history is not None and takes_history(model):
+        return model.predict(frame, move, list(history))  # type: ignore[call-arg]
+    return model.predict(frame, move)
 
 
 class ModelSpec(BaseModel):
@@ -233,13 +268,20 @@ def verify_replay(model: WorldModel, transitions: Sequence[Transition]) -> Repla
     checked = 0
     stopped = False
     reports_errors = hasattr(model, "last_error")
+    wants = takes_history(model)
+    past: list[tuple[Grid, Move]] = []
+    level: int | None = None
     for t in transitions:
         checked += 1
+        if level != t.levels_before:  # history is per level: a new level starts empty
+            past, level = [], t.levels_before
+        history = list(past) if wants else None
+        past.append((t.before, t.move))
         if reports_errors:
             model.last_error = None  # type: ignore[attr-defined]
         sandbox_error = None
         try:
-            diff = _cell_diff(model.predict(t.before, t.move), t.after)
+            diff = _cell_diff(call_predict(model, t.before, t.move, history), t.after)
             if reports_errors:
                 sandbox_error = model.last_error  # type: ignore[attr-defined]
         except Exception as exc:  # noqa: BLE001  untrusted model code: any failure is a mismatch

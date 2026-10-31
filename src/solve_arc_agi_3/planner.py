@@ -16,7 +16,14 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from solve_arc_agi_3.world_model import Grid, Move, WorldModel
+from solve_arc_agi_3.world_model import (
+    Grid,
+    History,
+    Move,
+    WorldModel,
+    call_predict,
+    takes_history,
+)
 
 Reason = Literal[
     "found",
@@ -70,6 +77,7 @@ def plan(
     beam_width: int | None = None,
     heuristic: Callable[[Grid], float] | None = None,
     clock: Callable[[], float] = time.monotonic,
+    history: History = (),
 ) -> PlanResult:
     """Find a move sequence from `frame` to a goal frame.
 
@@ -82,7 +90,10 @@ def plan(
     `is_goal` defaults to the model's own `is_goal` when it has one. When the model defines `legal_moves`
     (and `has_legal_moves` is not false) it overrides `moves` per state. A model that raises, returns
     something that is not a frame of the input shape, or reports a `last_error` ends the search with
-    reason "model failed"."""
+    reason "model failed".
+
+    `history` is the real prior transitions of the current level (oldest first); a model whose `predict`
+    takes a third argument gets it extended with the predicted steps along the path to each node."""
     start = clock()
     goal = is_goal if is_goal is not None else getattr(model, "is_goal", None)
     if goal is None:
@@ -92,6 +103,16 @@ def plan(
         model_moves = None
     if hasattr(model, "last_error"):
         model.last_error = None
+
+    wants_history = takes_history(model)
+
+    def rollout(node: int) -> list[tuple[Grid, Move]]:
+        steps: list[tuple[Grid, Move]] = []
+        while node > 0:
+            steps.append((frames[parent[node]], move_of[node]))  # type: ignore[arg-type]
+            node = parent[node]
+        steps.reverse()
+        return [*history, *steps]
 
     nodes = 0
     frames: list[Grid] = [frame]
@@ -172,7 +193,12 @@ def plan(
                         return result("time budget")
                     nodes += 1
                     try:
-                        out: Any = model.predict(frames[node], mv)
+                        out: Any = call_predict(
+                            model,
+                            frames[node],
+                            mv,
+                            rollout(node) if wants_history else None,
+                        )
                     except Exception as exc:
                         raise _ModelFailed(
                             f"predict {type(exc).__name__}: {exc}"

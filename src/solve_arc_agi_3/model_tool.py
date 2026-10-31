@@ -21,6 +21,7 @@ from solve_arc_agi_3.sandbox import (
 )
 from solve_arc_agi_3.world_model import (
     Grid,
+    History,
     ModelSpec,
     Move,
     ReplayReport,
@@ -96,11 +97,15 @@ class _Recorder:
             None  # read by verify_replay, which then stops early
         )
 
-    def predict(self, frame: Grid, move: Move) -> Grid:
+    @property
+    def takes_history(self) -> bool:
+        return self.model.takes_history
+
+    def predict(self, frame: Grid, move: Move, history: History | None = None) -> Grid:
         step = self.steps[self.calls] if self.calls < len(self.steps) else -1
         self.calls += 1
         self.model.last_error = None
-        out = self.model.predict(frame, move)
+        out = self.model.predict(frame, move, history)
         err = self.model.last_error
         self.last_error = err
         if err is not None and self.first is None:

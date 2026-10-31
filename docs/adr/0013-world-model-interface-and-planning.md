@@ -58,6 +58,12 @@ admissible heuristic.
 
 A frame-only `predict(frame, move)` replayed `ls20` and `ft09` exactly (150/150 on two seeds), because their state
 (lives, budget bar) is drawn in the frame. On `vc33` it reached only about 60%: the counter's drop rate (1 or 2 cells)
-and `RESET` (restores the current level's start frame) depend on state the frame does not carry. Consequence: the
-contract should let `predict` take the move history (or a model-held state object), not only the frame. Goals could
+and `RESET` (restores the current level's start frame) depend on state the frame does not carry. Consequence, now implemented: `predict`
+may take an optional third argument `history`, the list of prior `(frame, move)` transitions of the current level,
+oldest first (each frame is the one the move was played from). A model is detected by arity (`takes_history`: a third
+positional parameter or `*args`; the sandbox reads it from the source), so 2-argument models work unchanged and are
+never passed it. `verify_replay` passes the real observed transitions so far (reset when `levels_before` changes);
+`plan(..., history=...)` passes the real history extended with the predicted steps along each search path;
+`SandboxedModel` and `submit_world_model` forward it over IPC only for sources that take it, under the same
+sandbox limits. `is_goal` and `legal_moves` stay frame-only. Goals could
 not be tested: random play produced at most one level-up per game, so `is_goal` rules need traces with real clears.

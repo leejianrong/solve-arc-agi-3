@@ -1,9 +1,10 @@
 """Run model-written world-model code in a child process (ADR-0010, card ARC-51).
 
 `SandboxedModel` implements the `WorldModel` protocol of `world_model.py`. The model source defines
-`def predict(frame, move)`: `frame` is a list of hex-digit strings (one per row, not run-length encoded,
+`def predict(frame, move)` or `def predict(frame, move, history)`: `frame` is a list of hex-digit strings (one per row, not run-length encoded,
 64 rows of 64 in practice), `move` is a dict such as `{"name": "ACTION3"}` or
-`{"name": "ACTION6", "x": 12, "y": 30}`, and the result is a frame of the same shape.
+`{"name": "ACTION6", "x": 12, "y": 30}`, and the result is a frame of the same shape. The optional `history` is a list of `(frame, move)` pairs, the earlier
+transitions of the current level, oldest first (frames as above); it is passed only if the source takes it.
 
 This is **best-effort isolation, not a security boundary against a determined attacker**. What it is:
 restricted builtins, an AST filter and an import allow-list inside the child, plus OS resource limits
@@ -39,7 +40,13 @@ from dataclasses import dataclass
 from types import TracebackType
 from typing import Any, Literal, NoReturn, Self
 
-from solve_arc_agi_3.world_model import Grid, Move, frame_to_rows, rows_to_frame
+from solve_arc_agi_3.world_model import (
+    Grid,
+    History,
+    Move,
+    frame_to_rows,
+    rows_to_frame,
+)
 
 ErrorKind = Literal["timeout", "crash", "exception", "bad_output", "forbidden"]
 
@@ -282,7 +289,10 @@ def main():
                 else:
                     send({"ok": False, "kind": "bad_output", "message": "legal_moves did not return a list of move dicts: " + repr(out)[:100]})
             else:
-                out = predict(frame, req["move"])
+                if "history" in req:
+                    out = predict(frame, req["move"], [(h[0], h[1]) for h in req["history"]])
+                else:
+                    out = predict(frame, req["move"])
                 if not valid(out, len(frame), len(frame[0]) if frame else 0):
                     send({"ok": False, "kind": "bad_output", "message": "result is not a frame of the input shape: " + repr(out)[:150]})
                 else:
@@ -317,6 +327,18 @@ def _cut(text: str) -> str:
 
 _encode = frame_to_rows
 _decode = rows_to_frame
+
+
+def _predict_takes_history(source: str) -> bool:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    for n in tree.body:
+        if isinstance(n, ast.FunctionDef) and n.name == "predict":
+            a = n.args
+            return len(a.posonlyargs) + len(a.args) >= 3 or a.vararg is not None
+    return False
 
 
 def _defined_functions(source: str) -> frozenset[str]:
@@ -360,6 +382,7 @@ class SandboxedModel:
         self.timeout = min(max(timeout, 0.05), HARD_TIMEOUT)
         self.last_error: SandboxError | None = None
         defined = _defined_functions(source)
+        self.takes_history = _predict_takes_history(source)
         self.has_is_goal = "is_goal" in defined
         self.has_legal_moves = "legal_moves" in defined
         self.restarts = 0
@@ -390,14 +413,23 @@ class SandboxedModel:
             else None
         )
 
-    def call(self, frame: Grid, move: Move) -> Grid | SandboxError:
-        """Typed result of one prediction; never raises."""
+    def call(
+        self, frame: Grid, move: Move, history: History | None = None
+    ) -> Grid | SandboxError:
+        """Typed result of one prediction; never raises. `history` is sent only if the source takes it."""
         if self._broken is not None:
             return self._broken
         try:
-            reply = self._request(
-                {"op": "predict", "frame": _encode(frame), "move": _move_dict(move)}
-            )
+            req: dict[str, Any] = {
+                "op": "predict",
+                "frame": _encode(frame),
+                "move": _move_dict(move),
+            }
+            if self.takes_history:
+                req["history"] = [
+                    [_encode(f), _move_dict(m)] for f, m in (history or ())
+                ]
+            reply = self._request(req)
             return self._decode_reply(reply, frame)
         except _Fail as fail:
             if fail.kill:
@@ -407,8 +439,8 @@ class SandboxedModel:
             self._kill()
             return SandboxError("crash", _cut(f"{type(exc).__name__}: {exc}"))
 
-    def predict(self, frame: Grid, move: Move) -> Grid:
-        result = self.call(frame, move)
+    def predict(self, frame: Grid, move: Move, history: History | None = None) -> Grid:
+        result = self.call(frame, move, history)
         if isinstance(result, SandboxError):
             self.last_error = result
             return _EMPTY
@@ -677,6 +709,8 @@ def load(source: str, *, timeout: float = DEFAULT_TIMEOUT) -> SandboxedModel:
         isinstance(n, ast.FunctionDef) and n.name == "predict" for n in tree.body
     ):
         raise SourceRejected(
-            SandboxError("exception", "source does not define predict(frame, move)")
+            SandboxError(
+                "exception", "source does not define predict(frame, move[, history])"
+            )
         )
     return SandboxedModel(source, timeout=timeout)
