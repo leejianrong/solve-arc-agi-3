@@ -168,3 +168,50 @@ def test_from_trace_ignores_clicks_and_conflicting_deltas_are_both_kept() -> Non
     mine.propose("ACTION1 moves the object (colour 5, size 9) by (5, 0)", "mechanic", 0)
     mine.merge(ledger)
     assert len(mine.hypotheses) == 2 and mine.get("h1").supports == 1
+
+
+def _motion_step(
+    step: int, action: str, delta: tuple[int, int] | None
+) -> dict[str, Any]:
+    motion = (
+        [{"color": 5, "size": 4, "from": [2, 5], "to": [2 + delta[0], 5 + delta[1]]}]
+        if delta
+        else []
+    )
+    return {
+        "kind": "step",
+        "step": step,
+        "moves": [{"name": action}],
+        "levels": 0,
+        "change": {"n": 4 if delta else 0},
+        "motion": motion,
+        "counters": [],
+    }
+
+
+def test_expected_motion_lists_only_supported_computed_deltas() -> None:
+    records = [_motion_step(i, "ACTION3", (5, 0)) for i in range(2)]
+    assert (
+        Ledger.from_trace(records).expected_motion("ACTION3") == []
+    )  # two supports are not enough
+    records.append(_motion_step(2, "ACTION3", (5, 0)))
+    records.append(_motion_step(3, "ACTION1", (0, -1)))
+    ledger = Ledger.from_trace(records)
+    assert ledger.expected_motion("ACTION3") == [(5, 4, 5, 0)]
+    assert ledger.expected_motion("ACTION1") == []
+    assert ledger.expected_motion("ACTION2") == []
+    records.append(
+        _motion_step(4, "ACTION3", None)
+    )  # a counterexample ends "supported"
+    assert Ledger.from_trace(records).expected_motion("ACTION3") == []
+
+
+def test_expected_motion_ignores_model_claims() -> None:
+    ledger = Ledger()
+    hid = ledger.propose(
+        "ACTION3 moves the object (colour 5, size 4) by (5, 0)", "mechanic", 0
+    )
+    for i in range(3):
+        ledger.observe(hid, i, "support")
+    assert ledger.get(hid).status == "supported"
+    assert ledger.expected_motion("ACTION3") == []

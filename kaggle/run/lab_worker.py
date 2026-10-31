@@ -32,6 +32,17 @@ WORK = Path("/workspace/lab")
 AGENT_PY = os.environ.get("ARC3_AGENT_PYTHON", "/opt/agent-venv/bin/python")
 LIFETIME_S = int(os.environ.get("LAB_LIFETIME_S", str(3 * 3600)))
 START = time.time()
+OBS_DIR = Path(os.environ.get("OBS_DIR", "/workspace"))
+
+
+def phase(name: str, limit_s: int) -> None:
+    """Tell the pod watcher (scripts/lab_obs.sh) which phase this is and how long it may take."""
+    try:
+        (OBS_DIR / "phase.tmp").write_text(f"{name} {int(time.time())} {limit_s}\n")
+        (OBS_DIR / "phase.tmp").replace(OBS_DIR / "phase")
+    except OSError:
+        pass
+    print(f"PHASE={name} limit={limit_s}s T+{time.time() - START:.0f}s", flush=True)
 
 
 def refresh_bundle() -> None:
@@ -185,10 +196,18 @@ def run_experiment(exp: dict[str, object]) -> dict[str, object]:
         stdout=(out / "run.log").open("w"),
         stderr=subprocess.STDOUT,
     )
-    try:
-        proc.wait(timeout=seconds + 900)
-    except subprocess.TimeoutExpired:
-        proc.kill()
+    phase(f"exp-{name}", seconds + 1200)
+    deadline = t + seconds + 900
+    while proc.poll() is None:
+        if time.time() > deadline:
+            proc.kill()
+            break
+        time.sleep(30)
+        tail = (out / "run.log").read_text(errors="replace").splitlines()[-1:]
+        print(
+            f"LAB_PROGRESS {name} T+{time.time() - t:.0f}s run.log: {(tail or [''])[0][:160]}",
+            flush=True,
+        )
     text = (out / "run.log").read_text(errors="replace")
     result = summarize(name, text, out / "scorecard.json")
     result["wall_s"] = round(time.time() - t)
@@ -203,6 +222,7 @@ def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     WORK.mkdir(parents=True, exist_ok=True)
     refresh_bundle()
+    phase("vllm", 2400)
     server = boot_server()
     done: set[str] = set()
     last_beat = 0.0
@@ -220,6 +240,7 @@ def main() -> None:
                 log("LAB_STOP requested")
                 break
             if not todo:
+                phase("idle", 1800)
                 if time.time() - last_beat > 300:
                     log(
                         f"LAB_IDLE waiting for new experiments (T+{time.time() - START:.0f}s)"

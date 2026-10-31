@@ -307,3 +307,23 @@ def test_a_killed_run_leaves_every_written_line_readable(tmp_path: Path) -> None
     )
     lines = (tmp_path / "r4" / "g.jsonl").read_text().splitlines()
     assert len(lines) == 2 and all(json.loads(line)["v"] == 1 for line in lines)
+
+
+def test_event_is_written_only_when_given(tmp_path: Path) -> None:
+    run = RunTrace(tmp_path, run_id="r")
+    game = run.game("g")
+    base: dict[str, Any] = {
+        "game": "g",
+        "src": "model",
+        "move": {"name": "ACTION1"},
+        "grid": ((0, 1), (1, 0)),
+        "state": "NOT_FINISHED",
+        "levels": 0,
+        "win_levels": 1,
+        "avail": (1,),
+    }
+    game.step(**base)
+    game.step(**base, event="surprise")
+    lines = [json.loads(x) for x in (run.run_dir / "g.jsonl").read_text().splitlines()]
+    assert "event" not in lines[0] and lines[1]["event"] == "surprise"
+    assert lines[1]["v"] == 1

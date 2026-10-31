@@ -6,6 +6,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import pytest
+
 from solve_arc_agi_3.agent import ActionDecision
 from solve_arc_agi_3.inference import (
     ChatMessage,
@@ -241,3 +243,52 @@ def test_a_prose_reply_gets_one_plain_retry_before_falling_back() -> None:
         "previous reply contained no action" in seen[1]
         and "previous reply" not in seen[0]
     )
+
+
+def test_switches_come_from_the_environment_and_default_to_off() -> None:
+    from solve_arc_agi_3.kaggle_agent import agent_switches
+
+    assert agent_switches({}) == {
+        "prompt_chars": 0,
+        "events": False,
+        "tools": False,
+        "world_model": False,
+    }
+    assert agent_switches(
+        {
+            "ARC3_PROMPT_CHARS": "4000",
+            "ARC3_EVENTS": "1",
+            "ARC3_TOOLS": "1",
+            "ARC3_WORLD_MODEL": "1",
+        }
+    ) == {"prompt_chars": 4000, "events": True, "tools": True, "world_model": True}
+    assert (
+        agent_switches({"ARC3_PROMPT_CHARS": "", "ARC3_EVENTS": "0"})["events"] is False
+    )
+
+
+def test_world_model_without_tools_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ARC3_WORLD_MODEL", "1")
+    monkeypatch.delenv("ARC3_TOOLS", raising=False)
+    with pytest.raises(ValueError):
+        make_agent_class(Base, limits=limits(), client=OkClient(), action_mapper=mapper)
+
+
+def test_cleanup_closes_the_core_and_calls_the_base(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    class WithCleanup(Base):
+        def cleanup(self, *args: object, **kwargs: object) -> None:
+            calls.append("base")
+
+    for name in ("ARC3_EVENTS", "ARC3_TOOLS", "ARC3_WORLD_MODEL", "ARC3_PROMPT_CHARS"):
+        monkeypatch.delenv(name, raising=False)
+    agent = make_agent_class(
+        WithCleanup, limits=limits(), client=OkClient(), action_mapper=mapper
+    )()
+    closed: list[int] = []
+    agent._adapter.core.close = lambda: closed.append(1)  # type: ignore[method-assign]
+    agent.cleanup()
+    assert calls == ["base"] and closed == [1]

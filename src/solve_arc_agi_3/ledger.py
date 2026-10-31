@@ -8,6 +8,7 @@ Status is derived from the evidence tally by `_status`; only `retire` is a manua
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from typing import Any, Literal
@@ -27,6 +28,10 @@ COUNTERS_TO_REFUTE = (
 )
 NOTE_CHARS = 120
 LAST_MOVES = 5  # moves recorded as goal evidence when a level is cleared
+
+_MOTION_CLAIM = re.compile(
+    r"(\w+) moves the object \(colour (\d+), size (\d+)\) by \((-?\d+), (-?\d+)\)"
+)  # the statement `_motion` writes
 
 GOAL_STATEMENT = "A level is cleared by a short move sequence; the evidence lists the moves before each clear"
 
@@ -175,6 +180,17 @@ class Ledger(BaseModel):
         if skipped and used + len(footer) + 1 <= budget_chars:
             lines.append(footer)
         return "\n".join(lines)
+
+    def expected_motion(self, action: str) -> list[tuple[int, int, int, int]]:
+        """Supported computed claims that `action` moves an object: sorted (colour, size, dx, dy)."""
+        found: set[tuple[int, int, int, int]] = set()
+        for h in self.hypotheses:
+            if h.origin != "computed" or h.status != "supported":
+                continue
+            m = _MOTION_CLAIM.fullmatch(h.statement)
+            if m and m.group(1) == action:
+                found.add(tuple(int(g) for g in m.groups()[1:]))  # type: ignore[arg-type]
+        return sorted(found)
 
     @classmethod
     def from_trace(cls, records: Iterable[Mapping[str, Any]]) -> Ledger:

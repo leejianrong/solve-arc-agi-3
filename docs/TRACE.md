@@ -45,6 +45,7 @@ Every line has `v` (always 1) and `kind`.
 | `reply` | only on a model call: `{"content": "...", "reasoning_tail": "...", "tool_calls": ["{\"code\": ...}"]}`; content cut to 2000 characters, reasoning to its last 300 |
 | `plan`, `plan_idx` | on a model call and on its queued moves: the whole list of moves the model asked for, and which one this is |
 | `nudge` | true when this call carried the plain "reply with a tool call" reminder |
+| `event` | optional string, only with the `ARC3_EVENTS=1` switch and only on a model call: why the call happened, one of `level_start`, `surprise` (a queued move contradicted a supported ledger claim and the rest of the plan was dropped), `no_progress` (two moves in a row changed nothing), `plan_exhausted`. Additive; the schema version stays 1 |
 | `error` | only on a fallback: why the model step failed (exception class and message, cut to 300 characters) |
 | `change` | `{"n": 293, "bbox": [x0, y0, x1, y1], "regions": [[x0, y0, x1, y1, cells], ...]}`; `n` is 0 and `bbox` and `regions` are omitted when nothing changed (at most 6 regions, largest first) |
 | `motion` | objects that kept colour and size but moved: `[{"color": 5, "size": 10, "from": [x, y], "to": [x, y]}]` (centres); empty list if none |

@@ -4,6 +4,7 @@
 #
 #   set -a; . .env; set +a            # KAGGLE_USERNAME, KAGGLE_KEY, RUNPOD_API_KEY
 #   scripts/runpod_launch_lab.sh up   # create (refuses above LAB_MAX_HOURLY_USD, verifies after create)
+#   scripts/runpod_launch_lab.sh watch --max-usd 3.4   # REQUIRED after up: detects failure, saves logs, deletes pod
 #   scripts/runpod_launch_lab.sh logs # tail the job log
 #   scripts/runpod_launch_lab.sh down # terminate and verify nothing is left
 set -euo pipefail
@@ -16,6 +17,7 @@ MAX_USD="${LAB_MAX_HOURLY_USD:-1.80}"
 export LAB_LIFETIME="${LAB_LIFETIME_SECS:-10800}"
 NAME="arc3-agent-lab"
 STATE="/tmp/arc3-lab-pod-id"
+CMDFILE="$(mktemp)"
 
 api() { # method path [body]
   local args=(--silent --show-error --fail-with-body --connect-timeout 10 --max-time 30 -X "$1")
@@ -28,7 +30,9 @@ pod_id() { runpodctl pod list 2>/dev/null | jq -r --arg n "$NAME" '.[]? | select
 case "${1:-}" in
 up)
   [ -n "$(pod_id)" ] && { echo "pod already exists: $(pod_id)" >&2; exit 1; }
-  body="$(jq -n --rawfile cmd scripts/runpod_lab_entrypoint.sh --arg name "$NAME" --arg img "$IMAGE" --arg gpu "$GPU" --arg cloud "$CLOUD" '{
+  cat scripts/lab_obs.sh scripts/runpod_lab_entrypoint.sh >"$CMDFILE"   # one self-contained start command
+  bash -n "$CMDFILE" || { echo "start command has a syntax error" >&2; exit 1; }
+  body="$(jq -n --rawfile cmd "$CMDFILE"  --arg name "$NAME" --arg img "$IMAGE" --arg gpu "$GPU" --arg cloud "$CLOUD" '{
     name:$name, imageName:$img, computeType:"GPU", gpuTypeIds:[$gpu], gpuCount:1, cloudType:$cloud, interruptible:false,
     containerDiskInGb:220, volumeInGb:0, ports:[],
     env:{KAGGLE_USERNAME:env.KAGGLE_USERNAME, KAGGLE_KEY:env.KAGGLE_KEY, RUNPOD_API_KEY:env.RUNPOD_API_KEY,
@@ -45,6 +49,8 @@ up)
     api DELETE "/pods/$id" >/dev/null 2>&1 || true; echo "cost \$$cost/hr above cap \$$MAX_USD; terminated" >&2; exit 1
   fi
   echo "$id" ;;
+watch) # the driver-side watcher: polls, saves every log snapshot, enforces the cost cap, receives artifacts
+  exec python3 scripts/runpod_watch.py --pod-name "$NAME" "${@:2}" ;;
 logs) runpodctl pod logs "$(pod_id)" "${@:2}" ;;
 down)
   id="$(pod_id)"; [ -z "$id" ] && [ -f "$STATE" ] && id="$(cat "$STATE")"
@@ -52,5 +58,5 @@ down)
   rm -f "$STATE"
   left="$(pod_id)"; [ -n "$left" ] && { echo "WARNING: pod $left still present" >&2; exit 1; } || echo "verified: no $NAME pod remains" >&2 ;;
 status) runpodctl pod list 2>&1 | jq -r --arg n "$NAME" '.[]? | select(.name==$n) | "\(.id) \(.desiredStatus) \(.costPerHr)/hr"' ;;
-*) echo "usage: $0 up|logs|down|status" >&2; exit 2 ;;
+*) echo "usage: $0 up|watch|logs|down|status" >&2; exit 2 ;;
 esac

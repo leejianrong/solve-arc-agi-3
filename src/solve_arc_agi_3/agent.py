@@ -26,9 +26,10 @@ from .inference import (
     TextContentPart,
     ToolDefinition,
 )
-from .ledger import Ledger
+from .ledger import Kind, Ledger
 from .observation import (
     MAX_COUNTER_CELLS,
+    MAX_OBJECTS,
     ascii_grid,
     change_boxes,
     changed_count,
@@ -38,7 +39,9 @@ from .observation import (
     describe_objects,
     object_motion,
     region_key,
+    segment,
 )
+from .step_trace import encode_rows, grid_rows
 
 _ACTION_PATTERN = re.compile(r"\b(RESET|ACTION[1-7])\b", re.IGNORECASE)
 _COORDINATE_SUFFIX = re.compile(r"^[\s:(]*([0-9]{1,2})[\s,]+([0-9]{1,2})")
@@ -373,6 +376,77 @@ for example action([1, 1, 4]) or action([{"action": 6, "x": 12, "y": 30}]). Use 
 longer list only when you are sure of the controls."""
 
 
+MAX_TOOL_CALLS = 3  # hypothesis()/evidence() calls read from one reply
+MAX_STATEMENT = 200
+MAX_WORLD_MODEL_SOURCE = 20000
+MAX_WORLD_MODEL_MESSAGE = 600
+_KINDS = ("control", "mechanic", "goal", "counter", "other")
+
+_TOOLS_TOOL_TEXT = (
+    " The same code may first record what you believe: hypothesis('statement', 'mechanic'), "
+    "hypothesis('statement', 'goal', 'what you predict'), evidence('h3', 'support' or 'counter', 'note')."
+)
+_TOOLS_PROMPT = """
+
+The python call may also keep your notes on the game, before action(...): hypothesis("statement", "mechanic")
+records a claim (kind is one of control, mechanic, goal, counter, other; an optional third argument is what it
+predicts); evidence("h3", "support", "note") adds support, or "counter", evidence to your claim h3. At most 3
+such calls per reply, statements up to 200 characters. Your claims come back with their ids in the hypotheses
+block."""
+_WORLD_MODEL_TOOL_TEXT = (
+    " submit_world_model('''def predict(frame, move): ...''') offers a model of the game; it is checked "
+    "against every move so far."
+)
+_WORLD_MODEL_PROMPT = '''
+submit_world_model("""def predict(frame, move): ...""") offers Python source that predicts the next frame (a
+list of hex-digit row strings) from the current frame and the move ({'name': 'ACTION3'}, plus 'x' and 'y' for a
+click). It is accepted only if it reproduces every move played so far exactly; the answer comes back in the next
+message. Only math, itertools, collections, functools, copy, heapq, bisect and re may be imported.'''
+
+
+def tool_texts(tools: bool, world_model: bool) -> tuple[ToolDefinition, str]:
+    """The python tool and system prompt; the extras appear only when their switch is on."""
+
+    if not tools:
+        return PYTHON_TOOL, SYSTEM_PROMPT
+    description = PYTHON_TOOL.description + _TOOLS_TOOL_TEXT
+    prompt = SYSTEM_PROMPT + _TOOLS_PROMPT
+    if world_model:
+        description += _WORLD_MODEL_TOOL_TEXT
+        prompt += _WORLD_MODEL_PROMPT
+    return PYTHON_TOOL.model_copy(update={"description": description}), prompt
+
+
+_MISSING = object()
+
+
+def _literal(node: ast.expr) -> object:
+    try:
+        return ast.literal_eval(node)
+    except (ValueError, TypeError, SyntaxError):
+        return _MISSING
+
+
+def _tool_calls_from_python(code: str) -> list[tuple[str, list[object]]]:
+    """hypothesis(...), evidence(...) and submit_world_model(...) calls in source order (nothing runs)."""
+
+    try:
+        module = ast.parse(code, mode="exec")
+    except SyntaxError:
+        return []
+    found: list[tuple[int, int, str, list[object]]] = []
+    for node in ast.walk(module):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in ("hypothesis", "evidence", "submit_world_model")
+        ):
+            args = [_literal(a) for a in node.args]
+            found.append((node.lineno, node.col_offset, node.func.id, args))
+    found.sort(key=lambda f: (f[0], f[1]))
+    return [(name, args) for _, _, name, args in found]
+
+
 HISTORY_LINES = 40
 _ACTION_LABELS = {
     "RESET": "RESET",
@@ -397,7 +471,31 @@ class BaselineAgentCore:
         history_lines: int = HISTORY_LINES,
         use_ledger: bool = False,
         ledger_chars: int = 1200,
+        prompt_chars: int = 0,
+        events: bool = False,
+        tools: bool = False,
+        world_model: bool = False,
     ) -> None:
+        if world_model and not tools:
+            raise ValueError("the world_model switch requires the tools switch")
+        self._prompt_chars = prompt_chars
+        self._events = events
+        self._tools = tools
+        self._world_model = world_model
+        self._tool, self._system_prompt = tool_texts(tools, world_model)
+        # Prompt text that was cut to fit prompt_chars even with every trimmable part gone.
+        self.compaction_overflows = 0
+        self._surprise = ""
+        self._last_call_levels: int | None = None
+        self.last_event: str | None = None
+        self._model_ledger = Ledger()
+        self._game_id = "game"
+        self._wm_records: list[dict[str, Any]] = []
+        self._wm_log: Any = None
+        self._wm_result: Any = None
+        self._wm_message = ""
+        self._wm_seq = 0  # which submission the message is about
+        self._wm_shown_seq = -1  # the one the latest prompt carried
         self._use_ledger = use_ledger
         self._ledger_chars = ledger_chars
         self._ledger_records: list[dict[str, Any]] = []
@@ -540,7 +638,11 @@ class BaselineAgentCore:
             "counters": self._counter_regions(),
             "effects": {k: list(v) for k, v in self._effects.items()},
         }
-        if self._use_ledger:
+        if self._world_model:
+            self._record_world_model(observation)
+        if self._events and self._queue and gained <= 0:
+            self._check_surprise(key)
+        if self._use_ledger or self._events:
             self._ledger_records.append(
                 {
                     "kind": "step",
@@ -580,36 +682,287 @@ class BaselineAgentCore:
             if self._noop_streak >= 2
             else ""
         )
-        history = "\n".join(self._history[-12:]) or "(no actions yet)"
+        history = self._history[-12:] or ["(no actions yet)"]
         reminder = ""
         self._call_nudged = self._nudge
         if self._nudge:
             self._nudge = False
             reminder = self._nudge_text(names)
-        text = (
+        self._wm_shown_seq = self._wm_seq if self._wm_message else -1
+        # Mandatory parts (never trimmed): header, last result, warnings, what each action did, the grid.
+        head = (
             reminder
             + f"Game state: {observation.state}; levels completed {observation.levels_completed} of "
             f"{observation.win_levels}. Available actions: {names}.\n"
             f"Result of your last action: {self._last_change}.{warning}\n"
-            f"{self._plan_results()}"
+            + (f"{self._surprise}\n" if self._surprise else "")
+            + (f"{self._wm_message}\n" if self._wm_message else "")
+        )
+        effects = (
             f"What each action has done so far: {self._effects_text()}\n"
             f"{self._untried_line(observation)}"
-            f"{self._ledger_block()}"
-            f"{self._counter_line()}"
-            f"Recent steps:\n{history}\n\n"
-            f"{describe_objects(observation.grid)}\n\n"
-            f"Grid (rows top to bottom, x is the column, hex colours):\n{ascii_grid(observation.grid)}"
         )
+        counters = self._counter_line()
+        grid = (
+            "Grid (rows top to bottom, x is the column, hex colours):\n"
+            f"{ascii_grid(observation.grid)}"
+        )
+
+        def build(plan: str, hist: list[str] | None, ledger: str, objects: str) -> str:
+            recent = "Recent steps:\n" + "\n".join(hist) + "\n\n" if hist else ""
+            return f"{head}{plan}{effects}{ledger}{counters}{recent}{objects}\n\n{grid}"
+
+        plan_text = self._plan_results()
+        ledger_text = self._ledger_block()
+        objects_text = describe_objects(observation.grid)
+        text = build(plan_text, history, ledger_text, objects_text)
+        budget = self._prompt_chars
+        if budget > 0 and len(text) > budget:
+            text = self._compact(
+                budget, observation, build, history, objects_text, bool(ledger_text)
+            )
         self.last_observation_text = text
         return text
 
-    def _ledger_block(self) -> str:
-        """What the moves so far show, as claims with evidence (computed from this game's own steps)."""
+    def _compact(
+        self,
+        budget: int,
+        observation: Observation,
+        build: Callable[[str, list[str] | None, str, str], str],
+        history: list[str],
+        objects_text: str,
+        has_ledger: bool,
+    ) -> str:
+        """Trim to `budget` characters in a fixed order: plan results, oldest history lines, the
+        hypotheses block (shrunk to the room left, then dropped), the object list from its smallest
+        objects up. Header, last result, warnings, per-action effects and the grid are never cut; if
+        they alone exceed the budget the text is returned without the trimmable parts and
+        `compaction_overflows` goes up."""
 
-        if not self._use_ledger or not self._ledger_records:
+        ledger_text = self._ledger_block()
+        text = build("", history, ledger_text, objects_text)
+        if len(text) <= budget:
+            return text
+        for dropped in range(1, len(history) + 1):
+            text = build("", history[dropped:] or None, ledger_text, objects_text)
+            if len(text) <= budget:
+                return text
+        if has_ledger:
+            room = budget - len(build("", None, "", objects_text))
+            block = self._ledger_block(room)
+            if block:
+                text = build("", None, block, objects_text)
+                if len(text) <= budget:
+                    return text
+        shown = min(len(segment(observation.grid)), MAX_OBJECTS)
+        low, high = 0, shown
+        best = describe_objects(observation.grid, limit=0)
+        while (
+            low <= high
+        ):  # the longest object list that fits (length grows with the limit)
+            mid = (low + high) // 2
+            candidate = describe_objects(observation.grid, limit=mid)
+            if len(build("", None, "", candidate)) <= budget:
+                best, low = candidate, mid + 1
+            else:
+                high = mid - 1
+        text = build("", None, "", best)
+        if len(text) > budget:
+            self.compaction_overflows += 1
+        return text
+
+    def _ledger_block(self, budget: int | None = None) -> str:
+        """What the moves so far show, as claims with evidence (computed from this game's own steps,
+        plus the claims the model recorded when the tools switch is on). `budget` caps the block."""
+
+        use_computed = self._use_ledger and bool(self._ledger_records)
+        if not use_computed and not (self._tools and self._model_ledger.hypotheses):
             return ""
-        text = Ledger.from_trace(self._ledger_records).render(self._ledger_chars)
-        return f"Hypotheses so far, computed from your moves:\n{text}\n" if text else ""
+        ledger = Ledger()
+        ledger.merge(self._model_ledger)  # first, so the model's ids stay h1, h2, ...
+        if use_computed:
+            ledger.merge(Ledger.from_trace(self._ledger_records))
+        header = (
+            "Hypotheses so far (your own claims keep their ids; cite them in evidence()):\n"
+            if self._tools
+            else "Hypotheses so far, computed from your moves:\n"
+        )
+        limit = self._ledger_chars
+        if budget is not None:
+            limit = min(limit, budget - len(header) - 1)
+        if limit <= 0:
+            return ""
+        text = ledger.render(limit)
+        return f"{header}{text}\n" if text else ""
+
+    def _check_surprise(self, action: str) -> None:
+        """Drop the rest of the plan when the move just settled contradicts a supported claim about it."""
+
+        if "x" in self._pending_move:
+            return
+        before = Ledger.from_trace(
+            self._ledger_records
+        )  # without the move just settled
+        expected = before.expected_motion(action)
+        motion = cast(list[dict[str, Any]], self.last_settled["motion"])
+        for color, size, dx, dy in expected:
+            got = [
+                (m["to"][0] - m["from"][0], m["to"][1] - m["from"][1])
+                for m in motion
+                if (m["color"], m["size"]) == (color, size)
+            ]
+            if (dx, dy) in got:
+                continue
+            result = f"it moved by {got}" if got else "nothing moved"
+            self._surprise = (
+                f"SURPRISE: {action} was expected to move the object (colour {color}, size {size}) "
+                f"by ({dx}, {dy}) but {result}. The rest of your plan was dropped."
+            )
+            self._queue.clear()
+            return
+
+    def _event_for(self, observation: Observation) -> str:
+        if self._nudge and self.last_event:  # a retry of the same call keeps its reason
+            return self.last_event
+        if (
+            self._last_call_levels is None
+            or observation.levels_completed != self._last_call_levels
+        ):
+            return "level_start"
+        if self._surprise:
+            return "surprise"
+        if self._noop_streak >= 2:
+            return "no_progress"
+        return "plan_exhausted"
+
+    def _apply_tool_calls(self, response: InferenceResponse) -> None:
+        """Record the model's hypothesis()/evidence() calls (at most MAX_TOOL_CALLS per reply; bad ones are ignored)."""
+
+        budget = MAX_TOOL_CALLS
+        step = max(self._steps - 1, 0)
+        for call in response.tool_calls:
+            if call.function.name != "python":
+                continue
+            try:
+                arguments = json.loads(call.function.arguments)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(arguments, dict) or not isinstance(
+                arguments.get("code"), str
+            ):
+                continue
+            for name, args in _tool_calls_from_python(arguments["code"]):
+                if name == "submit_world_model":
+                    if self._world_model:
+                        self._submit_world_model(args)
+                    continue
+                if budget <= 0:
+                    continue
+                budget -= 1
+                if name == "hypothesis":
+                    self._tool_hypothesis(args, step)
+                else:
+                    self._tool_evidence(args, step)
+
+    def _tool_hypothesis(self, args: list[object], step: int) -> None:
+        if len(args) not in (2, 3) or any(not isinstance(a, str) for a in args):
+            return
+        statement, kind = cast(str, args[0]).strip(), args[1]
+        prediction = cast(str, args[2]).strip() if len(args) == 3 else None
+        if not statement or kind not in _KINDS:
+            return
+        self._model_ledger.propose(
+            statement[:MAX_STATEMENT],
+            cast(Kind, kind),
+            step,
+            prediction[:MAX_STATEMENT] if prediction else None,
+        )
+
+    def _tool_evidence(self, args: list[object], step: int) -> None:
+        if len(args) not in (2, 3) or any(not isinstance(a, str) for a in args):
+            return
+        hypothesis_id, polarity = args[0], args[1]
+        note = cast(str, args[2]) if len(args) == 3 else ""
+        if polarity not in ("support", "counter") or not any(
+            h.id == hypothesis_id for h in self._model_ledger.hypotheses
+        ):
+            return
+        self._model_ledger.observe(
+            cast(str, hypothesis_id),
+            step,
+            cast(Any, polarity),
+            note,
+        )
+
+    def _record_world_model(self, after: Observation) -> None:
+        """Keep trace-style records (keyframes only) of this game for the world-model check."""
+
+        before = self._previous
+        if before is None or not before.grid or not after.grid:
+            return
+        move = dict(self._pending_move)
+        if (
+            move.get("name") == "RESET"
+        ):  # a reset starts a new chain, nothing to predict
+            self._wm_records.append(
+                {
+                    "kind": "start",
+                    "levels": after.levels_completed,
+                    "frame": {"base": encode_rows(grid_rows(after.grid))},
+                }
+            )
+            return
+        if not self._wm_records:
+            self._wm_records.append(
+                {
+                    "kind": "start",
+                    "levels": before.levels_completed,
+                    "frame": {"base": encode_rows(grid_rows(before.grid))},
+                }
+            )
+        self._wm_records.append(
+            {
+                "kind": "step",
+                "step": self._steps - 1,
+                "moves": [move],
+                "state": after.state,
+                "levels": after.levels_completed,
+                "frame": {"key": encode_rows(grid_rows(after.grid))},
+            }
+        )
+
+    def _submit_world_model(self, args: list[object]) -> None:
+        if len(args) != 1 or not isinstance(args[0], str):
+            return
+        source = args[0]
+        self._wm_seq += 1
+        if len(source) > MAX_WORLD_MODEL_SOURCE:
+            self._wm_message = f"World model rejected: source longer than {MAX_WORLD_MODEL_SOURCE} characters."
+            return
+        try:
+            from .model_tool import submit_world_model
+            from .world_model import RevisionLog
+
+            if self._wm_log is None:
+                self._wm_log = RevisionLog(self._game_id)
+            result = submit_world_model(self._wm_log, source, list(self._wm_records))
+        except Exception as exc:  # noqa: BLE001 - a broken checker must not cost the move
+            self._wm_message = f"World model check failed: {type(exc).__name__}"
+            return
+        if result.accepted:
+            old, self._wm_result = self._wm_result, result
+            if old is not None:
+                old.close()
+        else:
+            result.close()
+        self._wm_message = result.message()[:MAX_WORLD_MODEL_MESSAGE]
+
+    def close(self) -> None:
+        """Release the sandboxed world model (game end); safe to call more than once."""
+
+        result, self._wm_result = self._wm_result, None
+        if result is not None:
+            result.close()
 
     def _plan_results(self) -> str:
         """Move-by-move effects of the last multi-move plan (a single move is already in the line above)."""
@@ -686,7 +1039,7 @@ class BaselineAgentCore:
             or self._noop_streak >= 2
         )
         self._settle_pending(observation)
-        if unsafe or self._noop_streak >= 2:
+        if unsafe or self._noop_streak >= 2 or not self._queue:
             self._queue.clear()
             return None
         decision = self._queue.pop(0)
@@ -729,6 +1082,10 @@ class BaselineAgentCore:
         self._settle_pending(observation)
         self._queue.clear()
         self._last_available = observation.available_actions
+        self._game_id = observation.game_id
+        if self._events:
+            self.last_event = self._event_for(observation)
+            self._last_call_levels = observation.levels_completed
         content_parts: list[TextContentPart | ImageContentPart] = [
             TextContentPart(text=self._observation_text(observation))
         ]
@@ -743,12 +1100,17 @@ class BaselineAgentCore:
             content=tuple(content_parts),
         )
         request = InferenceRequest(
-            messages=(ChatMessage(role="system", content=SYSTEM_PROMPT), user_message),
-            tools=(PYTHON_TOOL,),
+            messages=(
+                ChatMessage(role="system", content=self._system_prompt),
+                user_message,
+            ),
+            tools=(self._tool,),
         )
         response = self._client.complete(request)
         self.last_response = response
         self._previous = observation
+        if self._tools:
+            self._apply_tool_calls(response)
         return request, response
 
     def record_decision(
@@ -775,6 +1137,13 @@ class BaselineAgentCore:
             "plan_idx": 0,
             "nudge": self._call_nudged,
         }
+        if self._events and self.last_event:
+            self.last_turn["event"] = self.last_event
+        self._surprise = ""
+        if (
+            self._wm_shown_seq == self._wm_seq
+        ):  # shown once, in the prompt after the submission
+            self._wm_message = ""
         return decisions[0]
 
     def choose(self, observation: Observation) -> AgentTurn:

@@ -164,6 +164,7 @@ class GameTrace:
         error: str | None = None,
         settled: Mapping[str, Any] | None = None,
         obs_text: str | None = None,
+        event: str | None = None,
     ) -> None:
         record: dict[str, Any] = {
             "v": SCHEMA_VERSION,
@@ -194,6 +195,8 @@ class GameTrace:
             record["plan"], record["plan_idx"] = [dict(m) for m in plan], plan_idx
         if nudge:
             record["nudge"] = True
+        if event:
+            record["event"] = event
         if error:
             record["error"] = _cut(error, ERROR_CHARS)
         if settled:

@@ -17,7 +17,8 @@ Sibling repos: `../play-arc-agi-3` (human play app, local games in `environment_
    one-hour Kaggle run.
 2. **Money.** Never use OpenRouter (any model). Give the user a cost estimate and get an OK before using any
    paid key or RunPod. Never touch a pod, key or limit you did not create. RunPod jobs follow the
-   `runpod-jobs` skill; the dead-man's-switch is armed first.
+   `runpod-jobs` skill; the dead-man's-switch is armed first. Launch with `scripts/runpod_launch_lab.sh up`, then
+   always `watch --max-usd N` (pod-side `lab_obs.sh` + driver `runpod_watch.py`: phase deadlines, fatal lines, evidence shipped before delete).
 3. **Count from recordings or the trace, not log lines.** Kaggle logs print every agent line twice.
 4. **Submissions.** One per day, deadline 2026-11-02 23:59. Never submit without the user's go-ahead. Facts,
    pins and the dry-run history: `docs/baselines/kaggle-submission-checklist.md`.
@@ -46,7 +47,7 @@ older `trace.py` is only the smoke test's event log), `ledger.py` (hypothesis le
 replay check) and `sandbox.py` (runs model-written code; not wired in yet). `kaggle/run/` is what runs in the
 notebook (`main.py`), `scripts/` holds tooling (`local_play.py`, RunPod lab), `tools/replay/index.html` is the trace
 viewer (`make e2e-viewer` tests it in a real browser). Switches: `ARC3_TRACE_DIR` (write traces), `ARC3_LEDGER=1`
-(ledger block in the prompt, off by default).
+(ledger block in the prompt), `ARC3_PROMPT_CHARS=n` (prompt budget), `ARC3_EVENTS=1`, `ARC3_TOOLS=1`, `ARC3_WORLD_MODEL=1` (needs tools); all off by default.
 
 ## Git
 
