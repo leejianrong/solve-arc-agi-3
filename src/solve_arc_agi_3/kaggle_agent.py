@@ -121,7 +121,13 @@ def make_agent_class(
                         "model server never became ready before the deadline"
                     )
                 with limiter:
-                    return self._adapter.choose_action(frames, latest_frame)
+                    try:
+                        return self._adapter.choose_action(frames, latest_frame)
+                    except (
+                        ValueError
+                    ):  # the reply held no usable move: ask once more, plainly
+                        self._adapter.request_nudge()
+                        return self._adapter.choose_action(frames, latest_frame)
             except Exception:  # model/parse failure must not end the game
                 self._fallbacks += 1
                 logger.error(
@@ -166,9 +172,21 @@ class LoggingClient:
         self._tokens = 0
         self._seconds = 0.0
         self._no_tool = 0
+        self._errors = 0
 
     def complete(self, request: InferenceRequest) -> InferenceResponse:
-        response = self._inner.complete(request)
+        try:
+            response = self._inner.complete(request)
+        except Exception as exc:
+            with self._lock:
+                self._errors += 1
+                if self._errors <= 10:
+                    logger.warning(
+                        "model request failed: %s: %s",
+                        type(exc).__name__,
+                        str(exc)[:200],
+                    )
+            raise
         with self._lock:
             self._calls += 1
             self._tokens += response.usage.completion_tokens

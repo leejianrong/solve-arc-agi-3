@@ -205,3 +205,39 @@ def test_agent_class_from_env_applies_the_run_tunables(monkeypatch: object) -> N
         config.request_timeout_seconds,
         config.sampling.thinking,
     ) == (777, 55.0, False)
+
+
+def test_a_prose_reply_gets_one_plain_retry_before_falling_back() -> None:
+    replies = [
+        InferenceResponse(
+            content="Let me analyze the grid first...", elapsed_seconds=0.0
+        ),
+        InferenceResponse(
+            tool_calls=(
+                ToolCall(
+                    id="c",
+                    function=FunctionCall(
+                        name="python", arguments=json.dumps({"code": "action(2)"})
+                    ),
+                ),
+            ),
+            elapsed_seconds=0.0,
+        ),
+    ]
+    seen: list[str] = []
+
+    class Client:
+        def complete(self, request: InferenceRequest) -> InferenceResponse:
+            content = request.messages[-1].content
+            seen.append("".join(getattr(p, "text", "") for p in content))  # type: ignore[arg-type,union-attr]
+            return replies.pop(0)
+
+    agent = make_agent_class(
+        Base, limits=limits(), client=Client(), action_mapper=mapper
+    )()
+    move = agent.choose_action([Frame()], Frame())
+    assert move.name == "ACTION2" and move.source == "python_tool"  # type: ignore[attr-defined]
+    assert (
+        "previous reply contained no action" in seen[1]
+        and "previous reply" not in seen[0]
+    )

@@ -136,3 +136,31 @@ def test_local_vllm_thinking_is_a_per_request_switch(tmp_path: Path) -> None:
     )
     off = OpenAICompatibleClient(no_think)._request_body(request)
     assert off["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test_a_tool_call_with_extra_server_fields_is_accepted() -> None:
+    from solve_arc_agi_3.inference import _parse_chat_completion
+
+    raw = {
+        "choices": [
+            {
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "index": 0,
+                            "id": "call_1",
+                            "function": {
+                                "name": "python",
+                                "arguments": '{"code": "action([1])"}',
+                                "extra": True,
+                            },
+                        }
+                    ],
+                }
+            }
+        ],
+    }
+    response = _parse_chat_completion(raw, elapsed_seconds=1.0)
+    assert response.tool_calls[0].function.name == "python"

@@ -56,11 +56,16 @@ class InferenceRequest(WireModel):
 
 
 class FunctionCall(WireModel):
+    # Response-side models tolerate extra keys: servers add fields (OpenRouter sends "index" on tool calls).
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
     name: str
     arguments: str
 
 
 class ToolCall(WireModel):
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
     id: str
     type: Literal["function"] = "function"
     function: FunctionCall

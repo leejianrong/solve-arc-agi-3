@@ -390,6 +390,12 @@ class BaselineAgentCore:
         self._last_change = "no action taken yet"
         self._steps = 0
         self.last_response: InferenceResponse | None = None
+        self._nudge = False
+
+    def request_nudge(self) -> None:
+        """Ask for the move properly on the next call (the last reply had no usable action)."""
+
+        self._nudge = True
 
     @property
     def history(self) -> tuple[str, ...]:
@@ -439,8 +445,16 @@ class BaselineAgentCore:
             else ""
         )
         history = "\n".join(self._history[-12:]) or "(no actions yet)"
+        reminder = ""
+        if self._nudge:
+            self._nudge = False
+            reminder = (
+                "Your previous reply contained no action. Reply now with only the python tool call, "
+                "for example action([1]).\n"
+            )
         return (
-            f"Game state: {observation.state}; levels completed {observation.levels_completed} of "
+            reminder
+            + f"Game state: {observation.state}; levels completed {observation.levels_completed} of "
             f"{observation.win_levels}. Available actions: {names}.\n"
             f"Result of your last action: {self._last_change}.{warning}\n"
             f"What each action has done so far: {self._effects_text()}\n"
@@ -609,6 +623,9 @@ class OfficialAgentAdapter:
     @property
     def last_response(self) -> InferenceResponse | None:
         return self._core.last_response
+
+    def request_nudge(self) -> None:
+        self._core.request_nudge()
 
     def is_done(self, frames: list[FrameLike], latest_frame: FrameLike) -> bool:
         del frames

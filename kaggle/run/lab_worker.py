@@ -65,7 +65,14 @@ def boot_server() -> subprocess.Popen[bytes]:
             pass
         time.sleep(5)
     else:
-        raise RuntimeError(f"vLLM exited early (code {server.poll()}); see {run_dir}")
+        # The pod (and its disk) disappears right after the job, so put the evidence in the job log now.
+        for f in sorted(run_dir.glob("*.log"))[:2]:
+            lines = f.read_text(errors="replace").splitlines()
+            err = [i for i, x in enumerate(lines) if "Error" in x or "ERROR" in x or "FAILED" in x]
+            start = max(0, (err[0] if err else len(lines) - 40) - 5)
+            print(f"LAB_VLLM_LOG {f.name} ({len(lines)} lines), first error near line {err[0] if err else None}:", flush=True)
+            print("\n".join(x[:300] for x in lines[start : start + 60]), flush=True)
+        raise RuntimeError(f"vLLM exited early (code {server.poll()})")
     log(f"LAB_SERVER_READY after {time.time() - t:.0f}s of serving (T+{time.time() - START:.0f}s)")
     return server
 
