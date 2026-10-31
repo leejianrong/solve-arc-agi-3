@@ -30,6 +30,7 @@ from .ledger import Kind, Ledger
 from .observation import (
     MAX_COUNTER_CELLS,
     MAX_OBJECTS,
+    Region,
     ascii_grid,
     change_boxes,
     changed_count,
@@ -527,6 +528,9 @@ class BaselineAgentCore:
         self._plan_full: list[ActionDecision] = []
         self._plan_pos = 0
         self._call_nudged = False
+        self._mover: Region | None = None  # last object seen moving
+        self._move_status = ""
+        self._ignored_calls = 0  # extra parallel tool calls dropped from the last reply
 
     def _counter_regions(self) -> list[str]:
         """Small regions that changed on each of the last 3+ actions: probably a counter or timer."""
@@ -596,6 +600,16 @@ class BaselineAgentCore:
                 f"by ({moved_to.x0 - moved_from.x0:+d},{moved_to.y0 - moved_from.y0:+d})"
             )
             self._motions.setdefault(key, Counter())[kind] += 1
+        strip_only = bool(keys) and all(k[0] in ("row", "col") for k in keys)
+        if pairs:
+            self._mover = pairs[0][1]
+            dx, dy = pairs[0][1].x0 - pairs[0][0].x0, pairs[0][1].y0 - pairs[0][0].y0
+            self._move_status = f"{label} MOVED the object by ({dx:+d},{dy:+d})"
+        elif raw == 0 or (raw > 0 and (not changed or strip_only)):
+            why = "nothing changed" if raw == 0 else "only a counter or timer changed"
+            self._move_status = f"{label} was BLOCKED ({why}); the object did not move"
+        else:
+            self._move_status = f"{label} changed the grid but no object moved"
         tries = self._effects.setdefault(key, [0, 0])
         tries[0] += 1
         tries[1] += 1 if changed else 0
@@ -672,6 +686,18 @@ class BaselineAgentCore:
             parts.append(part)
         return "; ".join(parts)
 
+    def _status_header(self, observation: Observation) -> str:
+        if not self._move_status:
+            return self._untried_line(observation)
+        m = self._mover
+        where = (
+            f"Controlled object (colour {m.color}, size {m.size}) is at x{m.x0}-{m.x1} y{m.y0}-{m.y1}, "
+            f"centre {m.center}. "
+            if m
+            else "No object has been seen moving yet. "
+        )
+        return f"STATUS: {where}Last move: {self._move_status}.\n{self._untried_line(observation)}"
+
     def _observation_text(self, observation: Observation) -> str:
         names = ", ".join(
             _ACTION_LABELS.get(_name_or_none(a) or "", str(a))
@@ -682,7 +708,7 @@ class BaselineAgentCore:
             if self._noop_streak >= 2
             else ""
         )
-        history = self._history[-12:] or ["(no actions yet)"]
+        history = self._history[-6:] or ["(no actions yet)"]
         reminder = ""
         self._call_nudged = self._nudge
         if self._nudge:
@@ -690,18 +716,23 @@ class BaselineAgentCore:
             reminder = self._nudge_text(names)
         self._wm_shown_seq = self._wm_seq if self._wm_message else -1
         # Mandatory parts (never trimmed): header, last result, warnings, what each action did, the grid.
+        ignored = (
+            f"NOTE: your last reply had {self._ignored_calls} extra tool call(s); only the first "
+            "action-bearing call was used, the rest were ignored. Send one call per turn.\n"
+            if self._ignored_calls
+            else ""
+        )
         head = (
             reminder
+            + self._status_header(observation)
+            + ignored
             + f"Game state: {observation.state}; levels completed {observation.levels_completed} of "
             f"{observation.win_levels}. Available actions: {names}.\n"
             f"Result of your last action: {self._last_change}.{warning}\n"
             + (f"{self._surprise}\n" if self._surprise else "")
             + (f"{self._wm_message}\n" if self._wm_message else "")
         )
-        effects = (
-            f"What each action has done so far: {self._effects_text()}\n"
-            f"{self._untried_line(observation)}"
-        )
+        effects = f"What each action has done so far: {self._effects_text()}\n"
         counters = self._counter_line()
         grid = (
             "Grid (rows top to bottom, x is the column, hex colours):\n"
@@ -835,12 +866,36 @@ class BaselineAgentCore:
             return "no_progress"
         return "plan_exhausted"
 
-    def _apply_tool_calls(self, response: InferenceResponse) -> None:
+    @staticmethod
+    def _calls_to_use(
+        response: InferenceResponse, available: Sequence[int]
+    ) -> list[Any]:
+        """Tool calls up to and including the first one that carries a legal action. Later parallel calls
+        are dropped: their results would come from a board state the first call already changed."""
+
+        calls = list(response.tool_calls)
+        for i, call in enumerate(calls):
+            if call.function.name != "python":
+                continue
+            try:
+                args = json.loads(call.function.arguments)
+                code = args["code"]
+                if not isinstance(code, str):
+                    continue
+            except (json.JSONDecodeError, KeyError, TypeError):
+                continue
+            if any(d.action_id in available for d in _actions_from_python(code)):
+                return calls[: i + 1]
+        return calls
+
+    def _apply_tool_calls(
+        self, response: InferenceResponse, calls: list[Any] | None = None
+    ) -> None:
         """Record the model's hypothesis()/evidence() calls (at most MAX_TOOL_CALLS per reply; bad ones are ignored)."""
 
         budget = MAX_TOOL_CALLS
         step = max(self._steps - 1, 0)
-        for call in response.tool_calls:
+        for call in response.tool_calls if calls is None else calls:
             if call.function.name != "python":
                 continue
             try:
@@ -1109,8 +1164,10 @@ class BaselineAgentCore:
         response = self._client.complete(request)
         self.last_response = response
         self._previous = observation
+        calls = self._calls_to_use(response, observation.available_actions)
+        self._ignored_calls = len(response.tool_calls) - len(calls)
         if self._tools:
-            self._apply_tool_calls(response)
+            self._apply_tool_calls(response, calls)
         return request, response
 
     def record_decision(
