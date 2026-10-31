@@ -536,6 +536,13 @@ class BaselineAgentCore:
             Counter()
         )  # (move label, board hash) -> no-ops
         self._clicks: list[tuple[int, int]] = []
+        self._click_wins: Counter[tuple[int, int]] = (
+            Counter()
+        )  # click -> times it changed the board
+        self._recent: list[
+            str
+        ] = []  # last moves with their changes, for the LEVEL CLEARED note
+        self._cleared = ""  # shown once in the next prompt and recorded in last_turn
         self._last_change = "no action taken yet"
         self._steps = 0
         self.last_response: InferenceResponse | None = None
@@ -651,6 +658,20 @@ class BaselineAgentCore:
         exact = self._moves.setdefault(label, [0, 0])
         exact[0] += 1
         exact[1] += 1 if changed else 0
+        if changed and "x" in self._pending_move:
+            self._click_wins[
+                (int(str(self._pending_move["x"])), int(str(self._pending_move["y"])))
+            ] += 1
+        self._recent.append(
+            f"{label}: {change[:60]}{' (counter only)' if raw > 0 and not changed else ''}"
+        )
+        del self._recent[:-5]
+        if gained > 0:
+            self._cleared = (
+                f"LEVEL CLEARED by: {'; '.join(self._recent)}; "
+                f"board change that triggered it: {change[:120]}.\n"
+            )
+            self._recent.clear()
         if not changed:
             self._dead[(label, hash(before))] += 1
         tries = self._effects.setdefault(key, [0, 0])
@@ -770,6 +791,7 @@ class BaselineAgentCore:
         head = (
             reminder
             + self._status_header(observation)
+            + self._cleared
             + ignored
             + f"Game state: {observation.state}; levels completed {observation.levels_completed} of "
             f"{observation.win_levels}. Available actions: {names}.\n"
@@ -1173,6 +1195,7 @@ class BaselineAgentCore:
         self._pending_planned = True
         self._plan_pos += 1
         self.last_turn = {
+            **self._take_cleared(),
             "src": "planned",
             "move": self._move(decision),
             "plan": [self._move(d) for d in self._plan_full],
@@ -1240,6 +1263,13 @@ class BaselineAgentCore:
         }
         return sorted(labels)[:limit]
 
+    def _take_cleared(self) -> dict[str, object]:
+        text, self._cleared = self._cleared.strip(), ""
+        return {"cleared": text} if text else {}
+
+    def _effective_clicks(self) -> list[tuple[tuple[int, int], int]]:
+        return self._click_wins.most_common(8)
+
     def _untried_line(self, observation: Observation) -> str:
         if not self._effects:
             return ""
@@ -1249,7 +1279,26 @@ class BaselineAgentCore:
             if a != 0 and f"ACTION{a}" not in self._effects
         ]
         text = f"Not tried yet in this game: {', '.join(untried)}.\n" if untried else ""
-        if 6 in observation.available_actions and self._clicks:
+        wins = self._effective_clicks()
+        live_wins = [
+            w
+            for w in wins
+            if not self._is_dead(
+                ActionDecision(
+                    name="ACTION6",
+                    data={"x": w[0][0], "y": w[0][1]},
+                    source="loop-breaker",
+                ),
+                observation.grid,
+            )
+        ]
+        if wins:
+            listed = ", ".join(f"({x},{y}) x{n}" for (x, y), n in wins)
+            text = (
+                f"Clicks that changed the board: {listed} (repeat or vary these).\n"
+                + text
+            )
+        if 6 in observation.available_actions and self._clicks and not live_wins:
             fresh = untried_clicks(observation.grid, self._clicks, limit=8)
             if fresh:
                 listed = "; ".join(f"colour {r.color} at {r.center}" for r in fresh)
@@ -1266,6 +1315,14 @@ class BaselineAgentCore:
 
         available = observation.available_actions
         if avoid.data and 6 in available:
+            for (x, y), _ in self._effective_clicks():
+                cand = ActionDecision(
+                    name="ACTION6", data={"x": x, "y": y}, source="loop-breaker"
+                )
+                if cand.data != avoid.data and not self._is_dead(
+                    cand, observation.grid
+                ):
+                    return cand
             for r in untried_clicks(observation.grid, self._clicks, limit=8):
                 x, y = r.center
                 cand = ActionDecision(
@@ -1352,6 +1409,7 @@ class BaselineAgentCore:
         self._note_pending(decision)
         self._plan_pos += 1
         self.last_turn = {
+            **self._take_cleared(),
             "src": "queued",
             "move": self._move(decision),
             "plan": [self._move(d) for d in self._plan_full],
@@ -1440,6 +1498,7 @@ class BaselineAgentCore:
         self._note_pending(decisions[0])
         self._plan_full, self._plan_pos = decisions, 0
         self.last_turn = {
+            **self._take_cleared(),
             "src": "model",
             "move": self._move(decisions[0]),
             "plan": [self._move(d) for d in decisions],
