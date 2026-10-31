@@ -204,6 +204,11 @@ def main() -> None:
     )
     ap.add_argument("--seed", type=int, default=0, help="seed for --fake")
     ap.add_argument(
+        "--nav",
+        action="store_true",
+        help="state graph and reachability lines in the status header (ARC3_NAV)",
+    )
+    ap.add_argument(
         "--ledger",
         action="store_true",
         help="put the hypothesis ledger block in the prompt",
@@ -241,7 +246,12 @@ def main() -> None:
         else None
     )
     agent_cls = make_agent_class(
-        Base, limits=limits, client=client, trace=trace, use_ledger=args.ledger
+        Base,
+        limits=limits,
+        client=client,
+        trace=trace,
+        use_ledger=args.ledger,
+        nav=args.nav,
     )
 
     arc = Arcade(
