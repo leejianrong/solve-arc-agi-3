@@ -106,3 +106,10 @@ client that plays random 1 to 4 move plans):
 Consequence: wall time is not the scarce resource, actions are. A model that thinks for a minute and then clears level 1 in
 about the human baseline scores more than a fast one that flails. Next experiment: thinking ON with a large token budget
 (kernel `leejianrong/arc3-duck-qwen-dev-think`), against thinking OFF (kernel `leejianrong/arc3-duck-qwen`).
+
+## Thinking on versus off (dev kernel, 2026-10-31)
+
+Kernel `arc3-duck-qwen-dev-think`, thinking on, 6,144 tokens, 900 s timeout, first 8 public games, 55 minutes of play:
+608 recorded actions, 5 fallbacks, 0 levels, score 0.0, 550 model calls at a mean of 1,072 completion tokens and 38.6 s,
+about 1.1 moves per call. Thinking off on the same 8 games (dry run 5) took 1,275 actions in about 29 minutes, also 0 levels.
+No evidence that thinking helps within this budget and it costs about three times the time per action: thinking stays off.
