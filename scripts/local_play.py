@@ -48,6 +48,55 @@ class Base:
         self.game_id = game_id
 
 
+class RandomPlanClient:
+    """A scripted stand-in for the model: random 1-4 move plans over the actions the prompt says are available.
+
+    Costs nothing and exercises the whole agent (observation encoder, plans, counters, clicks, resets) on real
+    frames, so crashes and format bugs show up before a paid or hour-long run. Clicks use the listed object centres.
+    """
+
+    def __init__(self, seed: int = 0) -> None:
+        import random
+
+        self._rng = random.Random(seed)
+
+    def complete(self, request):
+        import re
+
+        from solve_arc_agi_3.inference import FunctionCall, InferenceResponse, ToolCall
+
+        content = request.messages[-1].content
+        text = (
+            content
+            if isinstance(content, str)
+            else "".join(getattr(p, "text", "") for p in content)
+        )
+        avail = [
+            int(n)
+            for n in re.findall(
+                r"ACTION(\d)", text.split("Result of your last action")[0]
+            )
+        ]
+        centres = [
+            (int(x), int(y)) for x, y in re.findall(r"center \((\d+),(\d+)\)", text)
+        ]
+        moves = []
+        for _ in range(self._rng.randint(1, 4)):
+            a = self._rng.choice(avail or [1])
+            if a == 6:
+                x, y = self._rng.choice(centres or [(32, 32)])
+                moves.append({"action": 6, "x": x, "y": y})
+            else:
+                moves.append(a)
+        call = ToolCall(
+            id="c",
+            function=FunctionCall(
+                name="python", arguments=json.dumps({"code": f"action({moves!r})"})
+            ),
+        )
+        return InferenceResponse(tool_calls=(call,), elapsed_seconds=0.0)
+
+
 def to_frame(raw) -> Frame:
     return Frame(
         raw.game_id,
@@ -103,6 +152,12 @@ def main() -> None:
     ap.add_argument("--max-tokens", type=int, default=1024)
     ap.add_argument("--timeout", type=float, default=120.0)
     ap.add_argument("--concurrency", type=int, default=8)
+    ap.add_argument(
+        "--fake",
+        action="store_true",
+        help="scripted random plans instead of a model (free)",
+    )
+    ap.add_argument("--seed", type=int, default=0, help="seed for --fake")
     args = ap.parse_args()
 
     logging.basicConfig(
@@ -117,7 +172,11 @@ def main() -> None:
             "sampling": config.sampling.model_copy(update={"thinking": args.thinking}),
         }
     )
-    client = LoggingClient(OpenAICompatibleClient(config), samples=4, every=40)
+    client = LoggingClient(
+        RandomPlanClient(args.seed) if args.fake else OpenAICompatibleClient(config),
+        samples=4,
+        every=400,
+    )
     limits = RunLimits(
         deadline_epoch=time.time() + 3600, max_concurrent_calls=args.concurrency
     )
@@ -149,6 +208,12 @@ def main() -> None:
     [t.join() for t in threads]
     scorecard = arc.close_scorecard(card)
     print(json.dumps(results, indent=1))
+    if scorecard is not None:
+        for env in scorecard.model_dump().get("environments", []):
+            for run in env.get("runs", []):
+                if run.get("levels_completed"):
+                    print("SCORED", env["id"], "levels", run["levels_completed"], "actions", run["actions"], "level_scores", run["level_scores"],
+                          "level_actions", run["level_actions"], "baseline", run["level_baseline_actions"])
     print(
         f"games={len(ids)} levels_total={sum(r['levels'] for r in results.values())} "
         f"fallbacks={sum(r['fallbacks'] for r in results.values())} steps={sum(r['steps'] for r in results.values())} "
