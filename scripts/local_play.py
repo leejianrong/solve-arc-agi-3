@@ -204,6 +204,11 @@ def main() -> None:
     )
     ap.add_argument("--seed", type=int, default=0, help="seed for --fake")
     ap.add_argument(
+        "--ledger",
+        action="store_true",
+        help="put the hypothesis ledger block in the prompt",
+    )
+    ap.add_argument(
         "--trace-dir",
         type=Path,
         help="write a step trace here and verify it replays exactly",
@@ -235,7 +240,9 @@ def main() -> None:
         if args.trace_dir
         else None
     )
-    agent_cls = make_agent_class(Base, limits=limits, client=client, trace=trace)
+    agent_cls = make_agent_class(
+        Base, limits=limits, client=client, trace=trace, use_ledger=args.ledger
+    )
 
     arc = Arcade(
         operation_mode=OperationMode.OFFLINE,
