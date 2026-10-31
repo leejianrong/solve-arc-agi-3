@@ -53,3 +53,11 @@ with unless the caller supplies a goal test (for example "levels_completed went 
 trace). Searching through a sandbox costs one IPC round trip per node, so default budgets are modest and
 `legal_moves` doubles the calls per expansion. Optimal-path guarantees hold only for breadth-first and an
 admissible heuristic.
+
+## Addendum 2026-10-31: probe findings (Haiku, hand-written models on scripted traces)
+
+A frame-only `predict(frame, move)` replayed `ls20` and `ft09` exactly (150/150 on two seeds), because their state
+(lives, budget bar) is drawn in the frame. On `vc33` it reached only about 60%: the counter's drop rate (1 or 2 cells)
+and `RESET` (restores the current level's start frame) depend on state the frame does not carry. Consequence: the
+contract should let `predict` take the move history (or a model-held state object), not only the frame. Goals could
+not be tested: random play produced at most one level-up per game, so `is_goal` rules need traces with real clears.
