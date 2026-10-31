@@ -1,0 +1,853 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ARC replay</title>
+<!-- Replay viewer for the agent trace in docs/TRACE.md. One file, no build, no network: open it from file://. -->
+<style>
+:root{--bg:#0e1116;--card:#151a21;--line:#28303a;--line2:#222a34;--fg:#e6e9ef;--mut:#9aa5b4;--dim:#8b96a6;--cyan:#6cc8ff;--amber:#ffb454;--red:#ff7a7a;--grey:#3a4452;
+--mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--sans:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans)}
+[hidden]{display:none!important}
+.page{max-width:1376px;margin:0 auto;padding:24px 32px 48px;display:flex;flex-direction:column;gap:20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+.cap{font:500 11px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--mut);margin:0 0 12px}
+.btn{font:500 13px var(--sans);color:var(--fg);background:#1d242d;border:1px solid #333c48;border-radius:8px;min-height:44px;min-width:44px;padding:0 14px;display:inline-flex;align-items:center;justify-content:center;gap:8px;cursor:pointer}
+.btn:hover{background:#252e39}
+.btn.on{background:#222b36;border-color:var(--cyan)}
+.btn:focus-visible,.bar:focus-visible,input:focus-visible,select:focus-visible,.tab:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.top{display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between}
+.brand{display:flex;flex-wrap:wrap;gap:12px;align-items:baseline}
+.brand b{font:500 15px var(--mono);color:var(--amber)}
+.brand span{font:400 14px var(--mono);color:var(--mut)}
+nav{display:flex;flex-wrap:wrap;gap:8px}
+.tab{font:500 13px var(--sans);color:var(--mut);background:none;padding:11px 14px;border-radius:8px;border:1px solid var(--line);cursor:pointer;min-height:44px}
+.tab:hover{color:var(--fg)}
+.tab[aria-current=page]{background:#222b36;color:var(--fg);border-color:var(--grey)}
+#drop{border:2px dashed var(--grey);border-radius:12px;padding:28px 20px;text-align:center;color:var(--mut);display:flex;flex-direction:column;gap:12px;align-items:center}
+#drop.over{border-color:var(--cyan);background:#16202b}
+#drop h2{margin:0;font:600 18px var(--sans);color:var(--fg)}
+#drop p{margin:0;font:400 13px/1.5 var(--sans);max-width:620px}
+#drop .pick{display:flex;flex-wrap:wrap;gap:10px;justify-content:center}
+#drop.slim{flex-direction:row;flex-wrap:wrap;padding:10px 16px;justify-content:space-between;text-align:left}
+#drop.slim h2{font-size:13px;font-weight:500;color:var(--mut)}
+#drop.slim p{display:none}
+.file-btn{position:relative;overflow:hidden}
+.file-btn input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%}
+#error{border:1px solid var(--red);background:#2a1618;color:#ffd0d0;border-radius:8px;padding:12px 16px;font:400 13px/1.5 var(--mono);white-space:pre-wrap}
+#warn{color:var(--amber);font:400 12px/1.5 var(--mono)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px}
+.tile .v{font:500 30px var(--mono)}.tile .v small{font-size:16px;color:var(--mut)}
+.tile .s{font:400 12px var(--mono);color:var(--mut);margin-top:6px}
+table{border-collapse:collapse;width:100%;min-width:900px}
+th{font:500 11px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--mut);text-align:left;padding:12px 14px;border-bottom:1px solid var(--line)}
+td{font:400 14px var(--mono);padding:11px 14px;border-bottom:1px solid #1f2630;vertical-align:middle}
+tbody tr:hover{background:#18202a}
+.sortbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.sortbar span{font:400 12px var(--mono);color:var(--mut)}
+.track{position:relative;height:14px;background:#1d242d;border-radius:3px;min-width:160px;flex:1}
+.track i{position:absolute;left:0;top:0;bottom:0;border-radius:3px}
+.track u{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--fg)}
+.note{font:400 13px/1.5 var(--sans);color:var(--mut);max-width:900px;margin:0}
+.cols{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start}
+.left{flex:0 1 580px;min-width:0;display:flex;flex-direction:column;gap:16px}
+.right{flex:1 1 420px;min-width:0;display:flex;flex-direction:column;gap:16px}
+.boardwrap{position:relative;width:100%;max-width:548px;aspect-ratio:1/1;margin:0 auto;border:1px solid #333c48;border-radius:4px;overflow:hidden;background:#000}
+.boardwrap canvas,.boardwrap svg{position:absolute;inset:0;width:100%;height:100%;display:block}
+canvas{image-rendering:pixelated;image-rendering:crisp-edges}
+.pill{font:500 12px var(--mono);color:var(--mut);border:1px solid #333c48;border-radius:20px;padding:5px 10px}
+.pill.amber{color:var(--bg);background:var(--amber);border-color:var(--amber);font-weight:600}
+.pill.red{color:var(--bg);background:var(--red);border-color:var(--red)}
+.pill.cyan{color:var(--bg);background:var(--cyan);border-color:var(--cyan)}
+.row{display:flex;justify-content:space-between;gap:16px;padding:7px 0;border-bottom:1px solid var(--line2);font:400 13px var(--sans);color:var(--mut)}
+.row b{font:500 13px var(--mono);color:var(--fg);text-align:right}
+.row:last-child{border-bottom:0}
+.bars{display:flex;gap:2px;align-items:flex-end;height:48px;overflow-x:auto}
+.bar{border:0;padding:0;margin:0;flex:1 0 3px;min-width:3px;border-radius:3px 3px 0 0;cursor:pointer;background:var(--cyan)}
+.bar.same{background:var(--grey)}.bar.clear{background:var(--amber)}
+.bar.cur{outline:2px solid var(--fg);outline-offset:1px}
+.legend{display:flex;flex-wrap:wrap;gap:16px;margin-top:12px;font:400 12px var(--mono);color:var(--mut)}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px}
+.ph{font:400 13px/1.5 var(--mono);color:var(--dim);border:1px dashed var(--grey);border-radius:8px;padding:10px 12px}
+.box{font:400 13px/1.55 var(--sans);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 12px;white-space:pre-wrap;word-break:break-word}
+pre.box{font:400 12px/1.5 var(--mono);margin:0;max-height:260px;overflow:auto}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{font:500 12px var(--mono);border:1px solid #333c48;border-radius:20px;padding:6px 10px;color:var(--mut)}
+.chip.cur{background:#222b36;border-color:var(--cyan);color:var(--fg)}
+.kv{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+code{font-family:var(--mono);color:var(--fg);font-size:12px}
+.sub{margin:10px 0 6px}
+label.scrub{display:block;margin:14px 0 0;font:400 12px var(--mono);color:var(--mut)}
+label.scrub input{display:block;width:100%;margin:8px 0 0;accent-color:var(--cyan)}
+select{font:500 13px var(--mono);color:var(--fg);background:#1d242d;border:1px solid #333c48;border-radius:8px;min-height:44px;padding:0 10px}
+table.small{min-width:0}table.small td,table.small th{padding:6px 8px;font-size:13px}
+table.cmp{min-width:760px}
+td.best{color:var(--cyan);font-weight:600;background:#16222d}td.best small{font:500 10px var(--mono);letter-spacing:.06em;text-transform:uppercase;margin-left:6px;color:var(--cyan)}
+.cmpgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.strip{position:relative;height:14px;border-radius:3px;background:#1d242d;margin:14px 0 8px}
+.strip i{position:absolute;top:0;bottom:0;border-radius:3px}
+.strip .cursor{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--fg)}
+.strip button.divmark{position:absolute;top:-8px;bottom:-8px;width:6px;margin-left:-3px;padding:0;border:0;border-radius:3px;background:var(--red);cursor:pointer}
+#dropb{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;border:2px dashed var(--grey);border-radius:12px;padding:10px 16px;color:var(--mut);font:500 13px var(--sans)}
+#dropb.over{border-color:var(--cyan);background:#16202b}
+#dropb .names{font:400 12px var(--mono);color:var(--mut)}
+.cmpgrid .boardwrap{max-width:400px}
+.cmpgrid .reply{max-height:120px;overflow:auto}
+.fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:16px}
+@media(max-width:560px){.page{padding:16px}.fgrid,.cmpgrid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="top">
+    <div class="brand"><b>ARC replay</b><span id="runlabel">no run loaded</span></div>
+    <nav aria-label="Views">
+      <button class="tab" data-view="overview" aria-current="page">Run overview</button>
+      <button class="tab" data-view="replay">Replay</button>
+      <button class="tab" data-view="failures">Failures</button>
+      <button class="tab" data-view="compare">Compare</button>
+    </nav>
+  </div>
+
+  <section id="drop" aria-label="Load a trace">
+    <h2 id="drop-title">Drop a run folder here</h2>
+    <p>A run folder holds <code>run.json</code>, one <code>&lt;game&gt;.jsonl</code> per game and optionally <code>&lt;game&gt;.obs.jsonl</code> (format: docs/TRACE.md). You can also drop several files. Nothing leaves this page.</p>
+    <div class="pick">
+      <label class="btn file-btn">Choose run folder<input id="folder" type="file" webkitdirectory directory multiple aria-label="Choose run folder"></label>
+      <label class="btn file-btn">Choose files<input id="files" type="file" multiple accept=".json,.jsonl" aria-label="Choose trace files"></label>
+    </div>
+  </section>
+  <section id="dropb" aria-label="Add a run to compare" hidden>
+    <span>Add a run to compare (drop a folder or choose one)</span>
+    <span class="names" id="runnames"></span>
+    <label class="btn file-btn">Add a run to compare<input id="folder-b" type="file" webkitdirectory directory multiple aria-label="Add a run to compare"></label>
+  </section>
+  <div id="error" role="alert" hidden></div>
+  <div id="warn" hidden></div>
+
+  <section id="v-overview" hidden>
+    <div style="display:flex;flex-direction:column;gap:20px">
+      <div class="tiles" id="tiles"></div>
+      <div class="card" style="padding:0;overflow:hidden">
+        <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--line)">
+          <p class="cap" style="margin:0">Games</p>
+          <div class="sortbar" id="sortbar"><span>Sort by</span></div>
+        </div>
+        <div style="overflow-x:auto">
+          <table id="games"><thead><tr>
+            <th>Game</th><th>Controls</th><th>Levels</th><th>Actions spent (tick = human level-1 baseline)</th><th>Vs baseline</th><th>Fallbacks</th><th>Replay</th>
+          </tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+      <p class="note">Each level scores 100 x (baseline / actions)^2 and later levels weigh more, so a long bar past the tick with no cleared level is where the points are being lost. Baselines come from an optional <code>baseline_actions</code> object in run.json; without it the baseline columns read n/a.</p>
+    </div>
+  </section>
+
+  <section id="v-replay" hidden>
+    <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:16px">
+      <label style="font:400 12px var(--mono);color:var(--mut)">Game <select id="gamesel"></select></label>
+      <span class="pill" id="gamemeta"></span>
+    </div>
+    <div class="cols">
+      <div class="left">
+        <div class="card" style="padding:16px">
+          <div class="boardwrap">
+            <canvas id="board" width="64" height="64" role="img" aria-label="Game board at the selected step"></canvas>
+            <svg id="overlay" viewBox="0 0 64 64" shape-rendering="geometricPrecision" aria-hidden="true">
+              <defs><marker id="ah" viewBox="0 0 6 6" refX="5" refY="3" markerWidth="4" markerHeight="4" orient="auto"><path d="M0 0L6 3L0 6z" fill="#fff"/></marker></defs>
+              <g id="ov"></g>
+            </svg>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:14px">
+            <span id="steplabel" style="font:500 22px var(--mono)"></span>
+            <span id="framelabel" style="font:400 13px var(--mono);color:var(--mut)"></span>
+            <span class="pill" id="levelpill"></span>
+            <span class="pill amber" id="cleared" hidden>LEVEL CLEARED</span>
+          </div>
+        </div>
+        <div class="card">
+          <p class="cap">Transport</p>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+            <button class="btn" id="b-first" aria-label="First step"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#e6e9ef" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3 3v10M13 3L6 8l7 5z"/></svg></button>
+            <button class="btn" id="b-prev" aria-label="Previous step"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#e6e9ef" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3L5 8l5 5"/></svg></button>
+            <button class="btn" id="b-play" style="min-width:104px">Play</button>
+            <button class="btn" id="b-next" aria-label="Next step"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#e6e9ef" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3l5 5-5 5"/></svg></button>
+            <button class="btn" id="b-last" aria-label="Last step"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#e6e9ef" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M13 3v10M3 3l7 5-7 5z"/></svg></button>
+          </div>
+          <label class="scrub">Scrub <input type="range" id="scrub" min="0" max="0" value="0"></label>
+          <p class="cap" style="margin-top:20px">Cells changed per step</p>
+          <div class="bars" id="bars"></div>
+          <div class="legend">
+            <span><i style="background:var(--cyan)"></i>board changed</span>
+            <span><i style="background:var(--grey)"></i>nothing changed</span>
+            <span><i style="background:var(--amber)"></i>level cleared</span>
+          </div>
+        </div>
+      </div>
+      <div class="right" id="panels">
+        <div class="card"><p class="cap">This step</p><div id="p-step"></div></div>
+        <div class="card"><p class="cap">Action taken</p><div id="p-move"></div></div>
+        <div class="card"><p class="cap">Motion and counters</p><div id="p-motion"></div></div>
+        <div class="card"><p class="cap">Model reply</p><div id="p-reply"></div></div>
+        <div class="card"><p class="cap">Plan</p><div id="p-plan"></div></div>
+        <div class="card"><p class="cap">What each action has done</p><div id="p-effects"></div></div>
+        <div class="card"><p class="cap">What the model saw</p><div id="p-obs"></div></div>
+        <div class="card"><p class="cap">This window of the run</p><div id="p-win"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="v-compare" hidden>
+    <div style="display:flex;flex-direction:column;gap:20px">
+      <div class="card" style="padding:0;overflow:hidden">
+        <div style="padding:16px 18px;border-bottom:1px solid var(--line)"><p class="cap" style="margin:0">Runs</p></div>
+        <div style="overflow-x:auto">
+          <table id="cmp-table" class="cmp"><thead><tr>
+            <th>Run</th><th>Settings</th><th>Games</th><th>Levels cleared</th><th>Actions</th><th>Fallback moves</th><th>Tokens per call</th><th>Seconds per call</th>
+          </tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+      <div class="card" id="c-help"></div>
+      <div id="c-side" style="display:flex;flex-direction:column;gap:16px" hidden>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center">
+          <label style="font:400 12px var(--mono);color:var(--mut)">Game in both runs <select id="cgame"></select></label>
+          <span class="pill" id="cmeta"></span>
+        </div>
+        <div class="card">
+          <p class="cap">Shared transport</p>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+            <button class="btn" id="c-first" aria-label="First step">|&lt;</button>
+            <button class="btn" id="c-prev" aria-label="Previous step">&lt;</button>
+            <button class="btn" id="c-play" style="min-width:104px">Play</button>
+            <button class="btn" id="c-next" aria-label="Next step">&gt;</button>
+            <button class="btn" id="c-last" aria-label="Last step">&gt;|</button>
+            <button class="btn" id="c-jump">Jump to first difference</button>
+            <span id="c-pos" style="font:500 16px var(--mono);margin-left:8px"></span>
+          </div>
+          <label class="scrub">Scrub <input type="range" id="c-scrub" min="0" max="0" value="0"></label>
+          <p class="cap" style="margin-top:20px">Where the runs played different moves</p>
+          <div class="strip" id="cstrip"></div>
+          <div class="legend" id="clegend"></div>
+        </div>
+        <div class="cmpgrid">
+          <div class="card" id="cc-A"></div>
+          <div class="card" id="cc-B"></div>
+        </div>
+      </div>
+      <p class="note">Counts differ between runs only through the games played, so read the fallback share and the per-call numbers first. One cleared level moves the score a lot; trust it across many games, not one.</p>
+    </div>
+  </section>
+
+  <section id="v-failures" hidden>
+    <div style="display:flex;flex-direction:column;gap:20px">
+      <div class="card" style="display:flex;flex-wrap:wrap;gap:20px;align-items:center;justify-content:space-between">
+        <div id="fsummary" style="font:400 14px/1.5 var(--sans);color:var(--mut);max-width:560px"></div>
+        <div class="sortbar" id="fchips"></div>
+      </div>
+      <div class="fgrid" id="fcards"></div>
+    </div>
+  </section>
+</div>
+
+<script>
+"use strict";
+const PAL = ['#000000','#0074D9','#FF4136','#2ECC40','#FFDC00','#AAAAAA','#F012BE','#FF851B','#7FDBFF','#870C25','#FFFFFF','#595959','#B2DF8A','#9D7CD8','#FFB7B2','#A38C3F'];
+const RGB = PAL.map(h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)));
+const HEX = '0123456789abcdef';
+const $ = id => document.getElementById(id);
+
+class TraceError extends Error {}
+
+// ---------------------------------------------------------------- DOM helper
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === 'class') e.className = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v === true ? '' : v);
+  }
+  for (const c of kids.flat()) if (c != null && c !== false) e.append(c.nodeType ? c : String(c));
+  return e;
+}
+const SVGNS = 'http://www.w3.org/2000/svg';
+function sv(tag, attrs) { const e = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); return e; }
+const fmt = n => Number(n).toLocaleString('en-US');
+
+// ---------------------------------------------------------------- frame codec (docs/TRACE.md)
+function decodeRows(enc, where) {
+  if (!Array.isArray(enc)) throw new TraceError(where + ': frame rows are not a list');
+  const out = new Uint8Array(4096);
+  let y = 0;
+  for (const e0 of enc) {
+    if (typeof e0 !== 'string') throw new TraceError(where + ': a frame row is not a string');
+    let e = e0, rep = 0;
+    const k = e.indexOf('~');
+    if (k >= 0) { rep = parseInt(e.slice(k + 1), 10); e = e.slice(0, k); if (!(rep >= 0)) throw new TraceError(where + ': bad row repeat "' + e0 + '"'); }
+    const row = [];
+    for (const tok of e.split('.')) {
+      const c = HEX.indexOf(tok[0]), n = parseInt(tok.slice(1), 10);
+      if (c < 0 || !(n > 0)) throw new TraceError(where + ': bad run token "' + tok + '"');
+      for (let i = 0; i < n; i++) row.push(c);
+    }
+    if (row.length !== 64) throw new TraceError(where + ': a row has ' + row.length + ' cells, expected 64');
+    for (let r = 0; r <= rep; r++) {
+      if (y >= 64) throw new TraceError(where + ': more than 64 rows');
+      out.set(row, y * 64); y++;
+    }
+  }
+  if (y !== 64) throw new TraceError(where + ': ' + y + ' rows, expected 64');
+  return out;
+}
+function applyDiff(prev, runs, where) {
+  const out = prev.slice();
+  if (!Array.isArray(runs)) throw new TraceError(where + ': diff is not a list');
+  for (const r of runs) {
+    if (!Array.isArray(r) || r.length !== 4) throw new TraceError(where + ': bad diff run ' + JSON.stringify(r));
+    const [y, x0, x1, c] = r;
+    if (!(y >= 0 && y < 64 && x0 >= 0 && x1 < 64 && x0 <= x1 && c >= 0 && c < 16)) throw new TraceError(where + ': diff run out of range ' + JSON.stringify(r));
+    out.fill(c, y * 64 + x0, y * 64 + x1 + 1);
+  }
+  return out;
+}
+function buildFrames(game) {
+  const where0 = game.id + ' start';
+  if (!game.start || !game.start.frame || !game.start.frame.base) throw new TraceError(game.id + ': no start record with a base frame');
+  const frames = [decodeRows(game.start.frame.base, where0)];
+  game.steps.forEach((s, i) => {
+    const where = game.id + ' step ' + s.step;
+    const f = s.frame || {};
+    frames.push(f.key ? decodeRows(f.key, where) : f.diff ? applyDiff(frames[i], f.diff, where) : frames[i]);
+  });
+  return frames;
+}
+
+// ---------------------------------------------------------------- loading
+const state = { run: null, runB: null, cgame: null, ccur: 0,  view: 'overview', gameId: null, cur: 0, playing: false, sort: ['game', 1], fpick: 'all' };
+
+function parseJsonl(text, name) {
+  const recs = []; const lines = text.split('\n'); let warn = null;
+  lines.forEach((ln, i) => {
+    if (!ln.trim()) return;
+    let o;
+    try { o = JSON.parse(ln); } catch (e) {
+      if (lines.slice(i + 1).every(l => !l.trim())) { warn = name + ': ignored an unfinished last line (a killed run leaves one)'; return; }
+      throw new TraceError(name + ' line ' + (i + 1) + ': not valid JSON (' + e.message + ')');
+    }
+    if (o === null || typeof o !== 'object' || Array.isArray(o)) throw new TraceError(name + ' line ' + (i + 1) + ': expected a JSON object');
+    recs.push(o);
+  });
+  return { recs, warn };
+}
+
+async function buildRun(files) {
+  const base = f => f.name.split('/').pop();
+  let runFile = null; const jsonl = [], obsF = [];
+  for (const f of files) {
+    const n = base(f);
+    if (n === 'run.json') runFile = runFile || f;
+    else if (n.endsWith('.obs.jsonl')) obsF.push(f);
+    else if (n.endsWith('.jsonl')) jsonl.push(f);
+  }
+  if (!runFile && !jsonl.length) throw new TraceError('No trace files found. Expected run.json and <game>.jsonl (see docs/TRACE.md).');
+  let meta = {}; const warns = [];
+  if (runFile) {
+    try { meta = JSON.parse(await runFile.text()); } catch (e) { throw new TraceError('run.json: not valid JSON (' + e.message + ')'); }
+    if (meta === null || typeof meta !== 'object' || Array.isArray(meta)) throw new TraceError('run.json: expected a JSON object');
+  }
+  const games = new Map();
+  for (const f of jsonl) {
+    const name = base(f), id = name.replace(/\.jsonl$/, '');
+    const { recs, warn } = parseJsonl(await f.text(), name);
+    if (warn) warns.push(warn);
+    const start = recs.find(r => r.kind === 'start') || null;
+    const steps = recs.filter(r => r.kind === 'step');
+    if (!start && !steps.length) throw new TraceError(name + ': no start or step records');
+    if (!start) throw new TraceError(name + ': no start record, so there is no first frame');
+    steps.sort((a, b) => (a.step ?? 0) - (b.step ?? 0));
+    games.set(start.game || id, { id: start.game || id, start, steps, obs: {} });
+  }
+  for (const f of obsF) {
+    const name = base(f), id = name.replace(/\.obs\.jsonl$/, '');
+    const { recs, warn } = parseJsonl(await f.text(), name);
+    if (warn) warns.push(warn);
+    const g = games.get(id); if (!g) continue;
+    for (const r of recs) if (typeof r.step === 'number' && typeof r.text === 'string') g.obs[r.step] = r.text;
+  }
+  const list = [...games.values()];
+  if (!list.length) throw new TraceError('run.json found but no <game>.jsonl files.');
+  for (const g of list) { g.frames = buildFrames(g); g.stats = statsOf(g, meta); }
+  list.sort((a, b) => a.id.localeCompare(b.id));
+  return { meta, games: list, warns };
+}
+
+function statsOf(g, meta) {
+  const last = g.steps[g.steps.length - 1] || g.start;
+  const calls = g.steps.filter(s => s.call);
+  const bl = meta.baseline_actions && Array.isArray(meta.baseline_actions[g.id]) ? meta.baseline_actions[g.id][0] : null;
+  return {
+    levels: last.levels ?? 0, of: g.start.win_levels ?? last.win_levels ?? 0,
+    actions: g.steps.length,
+    fallbacks: g.steps.filter(s => s.src === 'fallback').length,
+    calls: calls.length,
+    callMs: calls.reduce((a, s) => a + (s.call.ms || 0), 0),
+    callTok: calls.reduce((a, s) => a + (s.call.completion_tokens || 0), 0),
+    avail: last.avail || g.start.avail || [],
+    b1: Number.isFinite(bl) && bl > 0 ? bl : null,
+  };
+}
+
+function showError(msg) { const e = $('error'); e.textContent = msg; e.hidden = !msg; }
+function showWarn(list) { const e = $('warn'); e.textContent = list.join('\n'); e.hidden = !list.length; }
+
+async function openRun(fileList) {
+  const files = [...fileList].map(f => {
+    const rel = f.webkitRelativePath || f.fullPath || '';
+    return { name: rel || f.name, rel: f.webkitRelativePath, text: () => f.text() };
+  });
+  try {
+    const run = await buildRun(files);
+    const first = files.find(f => f.rel);
+    run.label = first ? first.rel.split('/')[0] : (run.meta.run_id || 'run');
+    stop(); showError(''); showWarn(run.warns);
+    return run;
+  } catch (e) {
+    if (!(e instanceof TraceError)) console.error(e);
+    showError('Could not open this trace.\n' + (e instanceof TraceError ? e.message : 'Unexpected problem: ' + e.message));
+    return null;
+  }
+}
+async function loadFiles(fileList) {
+  const run = await openRun(fileList); if (!run) return;
+  state.run = run; state.gameId = null; state.cur = 0; state.view = 'overview'; state.ccur = 0; state.cgame = null;
+  render();
+}
+// the second run (B); a third load replaces B, a new first load replaces A and keeps B
+async function loadFilesB(fileList) {
+  const run = await openRun(fileList); if (!run) return;
+  state.runB = run; state.ccur = 0; state.cgame = null; state.view = 'compare';
+  render();
+}
+
+// drag and drop, including folders (webkitGetAsEntry)
+function readEntry(entry, out) {
+  return new Promise(res => {
+    if (entry.isFile) entry.file(f => { Object.defineProperty(f, 'fullPath', { value: entry.fullPath.replace(/^\//, '') }); out.push(f); res(); }, () => res());
+    else if (entry.isDirectory) {
+      const rd = entry.createReader(); const all = [];
+      const more = () => rd.readEntries(async es => {
+        if (!es.length) { await Promise.all(all.map(e => readEntry(e, out))); res(); return; }
+        all.push(...es); more();
+      }, () => res());
+      more();
+    } else res();
+  });
+}
+const drop = $('drop');
+function wireDrop(zone, load) {
+  ['dragenter', 'dragover'].forEach(t => zone.addEventListener(t, e => { e.preventDefault(); zone.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(t => zone.addEventListener(t, e => { e.preventDefault(); zone.classList.remove('over'); }));
+  zone.addEventListener('drop', async e => {
+    const items = e.dataTransfer.items; const out = [];
+    if (items && items.length && items[0].webkitGetAsEntry) await Promise.all([...items].map(i => i.webkitGetAsEntry()).filter(Boolean).map(en => readEntry(en, out)));
+    else out.push(...e.dataTransfer.files);
+    load(out);
+  });
+}
+wireDrop(drop, loadFiles); wireDrop($('dropb'), loadFilesB);
+$('folder-b').addEventListener('change', e => { loadFilesB(e.target.files); e.target.value = ''; });
+$('folder').addEventListener('change', e => { loadFiles(e.target.files); e.target.value = ''; });
+$('files').addEventListener('change', e => { loadFiles(e.target.files); e.target.value = ''; });
+
+// ---------------------------------------------------------------- views
+function setView(v) { stop(); state.view = v; render(); }
+document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => { if (state.run) setView(b.dataset.view); }));
+
+function curGame() { return state.run && state.run.games.find(g => g.id === state.gameId); }
+function openReplay(id, frame) { stop(); state.gameId = id; state.cur = frame || 0; state.view = 'replay'; render(); }
+
+function render() {
+  const r = state.run;
+  drop.classList.toggle('slim', !!r);
+  $('drop-title').textContent = r ? 'Open another run (drop a folder or choose one)' : 'Drop a run folder here';
+  $('runlabel').textContent = r ? r.label + (r.meta.model ? ' / ' + r.meta.model : '') + ' / ' + r.games.length + ' game' + (r.games.length === 1 ? '' : 's') : 'no run loaded';
+  $('dropb').hidden = !r;
+  $('runnames').textContent = r ? 'A: ' + r.label + (state.runB ? '   B: ' + state.runB.label : '   B: none yet') : '';
+  document.querySelectorAll('.tab').forEach(b => { if (b.dataset.view === state.view && r) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
+  for (const v of ['overview', 'replay', 'failures', 'compare']) $('v-' + v).hidden = !r || state.view !== v;
+  if (!r) return;
+  if (state.view === 'overview') renderOverview();
+  else if (state.view === 'replay') { if (!state.gameId) state.gameId = r.games[0].id; renderReplay(); }
+  else if (state.view === 'compare') renderCompare();
+  else renderFailures();
+}
+
+// ---------------------------------------------------------------- overview
+function controlsText(av) {
+  const a = [...av].sort((x, y) => x - y);
+  if (!a.length) return 'none';
+  if (a.length === 1 && a[0] === 6) return 'click only';
+  const parts = []; let i = 0;
+  while (i < a.length) { let j = i; while (j + 1 < a.length && a[j + 1] === a[j] + 1) j++; parts.push(j - i >= 2 ? a[i] + '-' + a[j] : a.slice(i, j + 1).join(', ')); i = j + 1; }
+  return parts.join(', ');
+}
+const SORTS = [['game', 'Game'], ['ratio', 'Actions vs baseline'], ['actions', 'Actions'], ['levels', 'Levels'], ['fallbacks', 'Fallbacks']];
+function sortKeyVal(g, k) {
+  const s = g.stats;
+  return k === 'game' ? g.id : k === 'ratio' ? (s.b1 ? s.actions / s.b1 : null) : k === 'actions' ? s.actions : k === 'levels' ? s.levels : s.fallbacks;
+}
+function renderOverview() {
+  const games = state.run.games, T = games.map(g => g.stats);
+  const sum = k => T.reduce((a, s) => a + s[k], 0);
+  const levels = sum('levels'), of = sum('of'), actions = sum('actions'), fb = sum('fallbacks'), calls = sum('calls');
+  const tile = (cap, v, sub, color) => el('div', { class: 'card tile' }, el('p', { class: 'cap' }, cap), el('div', { class: 'v', style: color ? 'color:' + color : null }, v), el('div', { class: 's' }, sub));
+  $('tiles').replaceChildren(
+    tile('Levels cleared', [fmt(levels), el('small', null, ' of ' + fmt(of))], games.length + ' game' + (games.length === 1 ? '' : 's'), levels ? 'var(--amber)' : null),
+    tile('Actions', fmt(actions), calls ? 'about ' + (actions / calls).toFixed(2) + ' moves per model call' : 'moves per model call: n/a (no call records)'),
+    tile('Fallback moves', fmt(fb), actions ? (100 * fb / actions).toFixed(1) + '% of actions' : 'n/a', fb ? 'var(--amber)' : null),
+    tile('Per model call', calls ? (sum('callMs') / calls / 1000).toFixed(1) + ' s' : 'n/a', calls ? 'mean ' + Math.round(sum('callTok') / calls) + ' completion tokens, ' + fmt(calls) + ' calls' : 'no call records'),
+  );
+  const sb = $('sortbar'); sb.replaceChildren(el('span', null, 'Sort by'));
+  for (const [k, label] of SORTS) sb.append(el('button', { class: 'btn' + (state.sort[0] === k ? ' on' : ''), 'data-sort': k, 'aria-label': 'Sort by ' + label, onclick: () => { state.sort = [k, state.sort[0] === k ? -state.sort[1] : 1]; renderOverview(); } }, label + (state.sort[0] === k ? (state.sort[1] > 0 ? ' ↑' : ' ↓') : '')));
+  const [key, dir] = state.sort;
+  const sorted = [...games].sort((a, b) => {
+    const x = sortKeyVal(a, key), y = sortKeyVal(b, key);
+    if (x == null && y == null) return a.id.localeCompare(b.id);
+    if (x == null) return 1; if (y == null) return -1;
+    return (typeof x === 'string' ? x.localeCompare(y) : x - y) * dir || a.id.localeCompare(b.id);
+  });
+  const maxA = Math.max(1, ...T.map(s => Math.max(s.actions, s.b1 || 0))) * 1.08;
+  const tb = $('games').querySelector('tbody'); tb.replaceChildren();
+  for (const g of sorted) {
+    const s = g.stats, ratio = s.b1 ? s.actions / s.b1 : null;
+    const color = ratio == null ? 'var(--cyan)' : (ratio > 1 && s.levels === 0 ? 'var(--red)' : 'var(--cyan)');
+    tb.append(el('tr', { 'data-game': g.id },
+      el('td', { style: 'font-weight:500' }, g.id),
+      el('td', { style: 'color:var(--mut);font-size:13px' }, controlsText(s.avail)),
+      el('td', { style: s.levels ? 'color:var(--amber)' : null }, s.levels + ' of ' + s.of),
+      el('td', null, el('div', { style: 'display:flex;align-items:center;gap:12px' },
+        el('div', { class: 'track' }, el('i', { style: 'width:' + (100 * s.actions / maxA) + '%;background:' + color }), s.b1 ? el('u', { style: 'left:' + (100 * s.b1 / maxA) + '%' }) : null),
+        el('span', { style: 'width:52px;text-align:right' }, fmt(s.actions)))),
+      el('td', { class: 'vs', style: 'color:' + (ratio == null ? 'var(--mut)' : ratio > 1 ? 'var(--red)' : 'var(--cyan)') }, ratio == null ? 'n/a' : ratio.toFixed(1) + 'x'),
+      el('td', { style: s.fallbacks ? 'color:var(--amber)' : null }, String(s.fallbacks)),
+      el('td', null, el('button', { class: 'btn open-replay', 'aria-label': 'Open replay of ' + g.id, onclick: ev => { ev.stopPropagation(); openReplay(g.id); } }, 'Open replay'))));
+    tb.lastChild.addEventListener('click', () => openReplay(g.id));
+    tb.lastChild.style.cursor = 'pointer';
+  }
+}
+
+// ---------------------------------------------------------------- replay
+let timer = null;
+function stop() { state.playing = false; clearInterval(timer); timer = null; for (const id of ['b-play', 'c-play']) { const b = $(id); if (b) b.textContent = 'Play'; } }
+function go(n) { const g = curGame(); if (!g) return; state.cur = Math.max(0, Math.min(g.frames.length - 1, n)); drawFrame(); }
+function stepAt(g, frame) { return frame > 0 ? g.steps[frame - 1] : null; }
+const levelsBefore = (g, frame) => frame <= 1 ? (g.start.levels ?? 0) : g.steps[frame - 2].levels;
+const isClear = (g, frame) => frame > 0 && g.steps[frame - 1].levels > levelsBefore(g, frame);
+
+function renderReplay() {
+  const r = state.run, g = curGame();
+  const sel = $('gamesel');
+  sel.replaceChildren(...r.games.map(x => el('option', { value: x.id, selected: x.id === g.id }, x.id)));
+  $('gamemeta').textContent = g.stats.levels + ' of ' + g.stats.of + ' levels / ' + g.stats.actions + ' actions';
+  const N = g.frames.length;
+  const scrub = $('scrub'); scrub.max = N - 1;
+  const bars = $('bars'); bars.replaceChildren();
+  const maxN = Math.max(1, ...g.steps.map(s => (s.change && s.change.n) || 0));
+  g.steps.forEach((s, i) => {
+    const n = (s.change && s.change.n) || 0, clear = isClear(g, i + 1);
+    const h = clear ? 46 : n === 0 ? 4 : Math.round(8 + 34 * Math.log(n + 1) / Math.log(maxN + 1));
+    bars.append(el('button', { class: 'bar' + (clear ? ' clear' : n ? '' : ' same'), 'data-frame': i + 1, style: 'height:' + h + 'px', 'aria-label': 'step ' + s.step + ', ' + (n ? fmt(n) + ' cells changed' : 'nothing changed') + (clear ? ', level cleared' : ''), onclick: () => { stop(); go(i + 1); } }));
+  });
+  if (state.cur >= N) state.cur = 0;
+  drawFrame();
+}
+
+function paintBoard(cv, px) {
+  const ctx = cv.getContext('2d'), img = ctx.createImageData(64, 64);
+  for (let i = 0; i < 4096; i++) { const c = RGB[px[i]]; img.data[i * 4] = c[0]; img.data[i * 4 + 1] = c[1]; img.data[i * 4 + 2] = c[2]; img.data[i * 4 + 3] = 255; }
+  ctx.putImageData(img, 0, 0);
+}
+
+function drawFrame() {
+  const g = curGame(), f = state.cur, N = g.frames.length, s = stepAt(g, f);
+  paintBoard($('board'), g.frames[f]);
+  $('scrub').value = f;
+  document.querySelectorAll('#bars .bar').forEach(b => b.classList.toggle('cur', +b.dataset.frame === f));
+  $('b-first').disabled = $('b-prev').disabled = f === 0; $('b-next').disabled = $('b-last').disabled = f === N - 1;
+  $('steplabel').textContent = s ? 'step ' + s.step : 'start';
+  $('framelabel').textContent = 'frame ' + (f + 1) + ' / ' + N;
+  const lv = s ? s.levels : g.start.levels, of = g.stats.of;
+  $('levelpill').textContent = 'levels ' + (lv ?? 0) + ' of ' + of;
+  $('cleared').hidden = !isClear(g, f);
+  drawOverlay(s);
+  panels(g, f, s);
+}
+
+function drawOverlay(s) {
+  const ov = $('ov'); ov.replaceChildren();
+  if (!s) return;
+  const c = s.change;
+  if (c && c.bbox && c.n > 0) {
+    const [x0, y0, x1, y1] = c.bbox;
+    if ((x1 - x0 + 1) * (y1 - y0 + 1) < 2400) ov.append(sv('rect', { id: 'bbox', x: x0, y: y0, width: x1 - x0 + 1, height: y1 - y0 + 1, fill: 'none', stroke: '#6cc8ff', 'stroke-width': .35, 'stroke-dasharray': '1.2 .8' }));
+  }
+  for (const m of s.motion || []) {
+    if (!Array.isArray(m.from) || !Array.isArray(m.to) || (m.from[0] === m.to[0] && m.from[1] === m.to[1])) continue;
+    const a = { x1: m.from[0] + .5, y1: m.from[1] + .5, x2: m.to[0] + .5, y2: m.to[1] + .5, fill: 'none', 'stroke-linecap': 'round' };
+    ov.append(sv('line', { ...a, stroke: '#000', 'stroke-width': .9 }), sv('line', { ...a, class: 'arrow', stroke: '#fff', 'stroke-width': .45, 'marker-end': 'url(#ah)' }));
+  }
+  const mv = (s.moves || [])[0];
+  if (mv && Number.isFinite(mv.x) && Number.isFinite(mv.y)) {
+    const cx = mv.x + .5, cy = mv.y + .5;
+    for (const [col, w] of [['#000', 1], ['#fff', .45]]) {
+      ov.append(sv('circle', { cx, cy, r: 2.2, fill: 'none', stroke: col, 'stroke-width': w }), sv('path', { d: `M${cx - 3.4} ${cy}H${cx - 1.2}M${cx + 1.2} ${cy}H${cx + 3.4}M${cx} ${cy - 3.4}V${cy - 1.2}M${cx} ${cy + 1.2}V${cy + 3.4}`, stroke: col, 'stroke-width': w, fill: 'none' }));
+    }
+    ov.lastChild.setAttribute('class', 'click-marker');
+  }
+}
+
+const fill = (e, ...k) => e.replaceChildren(...k.flat().filter(x => x != null && x !== false));
+const row = (k, v) => el('div', { class: 'row' }, el('span', null, k), el('b', null, v));
+const none = t => el('div', { class: 'ph' }, t);
+const moveText = m => m.name + (Number.isFinite(m.x) ? ' (' + m.x + ', ' + m.y + ')' : '');
+const SRC = { model: ['model call', 'cyan'], queued: ['queued from plan', ''], fallback: ['fallback', 'amber'], forced_reset: ['forced reset', 'red'] };
+
+const changeLine = s => { const c = s.change; return !c ? 'not recorded' : c.n ? fmt(c.n) + ' cells' + (c.bbox ? ' in x' + c.bbox[0] + '-' + c.bbox[2] + ', y' + c.bbox[1] + '-' + c.bbox[3] : '') : 'nothing changed'; };
+
+function panels(g, f, s) {
+  const st = g.stats;
+  if (!s) {
+    $('p-step').replaceChildren(row('Step', 'start'), row('Levels completed', (g.start.levels ?? 0) + ' of ' + st.of), row('Game state', g.start.state || '?'), row('What changed', 'first frame of this game'));
+    for (const id of ['p-move', 'p-motion', 'p-reply', 'p-plan', 'p-effects']) $(id).replaceChildren(none('Before the first move.'));
+  } else {
+    const changeText = changeLine(s);
+    $('p-step').replaceChildren(row('Step', String(s.step)), row('Levels completed', (s.levels ?? 0) + ' of ' + (s.win_levels ?? st.of)), row('Game state', s.state || '?'), row('What changed', changeText));
+    const [lab, cls] = SRC[s.src] || [String(s.src), ''];
+    fill($('p-move'),
+      el('div', { class: 'kv', style: 'margin-top:0' }, el('span', { class: 'pill ' + cls, id: 'src-pill' }, lab), ...(s.moves || []).map(m => el('span', { class: 'chip cur' }, moveText(m)))),
+      (s.moves || []).some(m => Number.isFinite(m.x)) ? el('p', { class: 'note', style: 'margin:0' }, 'The click is marked on the board.') : null);
+    const mot = s.motion || [], cnt = s.counters || [];
+    $('p-motion').replaceChildren(
+      el('p', { class: 'cap sub' }, 'Moved objects'),
+      mot.length ? el('div', null, ...mot.map(m => el('div', { class: 'row' }, el('span', null, 'colour ' + m.color + ', size ' + m.size), el('b', null, '(' + (m.from || []).join(', ') + ') → (' + (m.to || []).join(', ') + ')')))) : none('No object kept its colour and size and moved.'),
+      el('p', { class: 'cap sub', style: 'margin-top:14px' }, 'Counters note'),
+      cnt.length ? el('div', { class: 'box' }, cnt.join('\n')) : none('No counter or timer flagged.'));
+    const rp = s.reply;
+    const callBits = s.call ? [
+      s.call.ok === false ? el('span', { class: 'pill red' }, 'call failed') : el('span', { class: 'pill' }, 'call ok'),
+      el('span', { class: 'pill' }, (s.call.ms / 1000).toFixed(1) + ' s'),
+      el('span', { class: 'pill' }, fmt(s.call.prompt_tokens ?? 0) + ' prompt tokens'),
+      el('span', { class: 'pill' }, fmt(s.call.completion_tokens ?? 0) + ' completion tokens')] : [];
+    fill($('p-reply'),
+      !rp && !s.call && !s.error ? none('No model call for this step (' + lab + ').') : null,
+      el('div', { class: 'kv', style: 'margin-top:0' }, ...callBits, s.nudge ? el('span', { class: 'pill cyan', id: 'nudge' }, 'nudge: plain reminder') : null, s.src === 'fallback' ? el('span', { class: 'pill amber' }, 'fallback') : null),
+      s.error ? el('div', { class: 'box', id: 'errbox', style: 'border-color:var(--red);color:#ffd0d0;margin-bottom:10px' }, 'Error: ' + s.error) : null,
+      rp ? el('div', null, el('div', { class: 'box', id: 'replytext' }, rp.content || '(empty)'),
+        (rp.tool_calls || []).length ? el('div', { class: 'kv' }, el('span', { class: 'cap', style: 'margin:0' }, 'Tool call'), ...rp.tool_calls.map(t => el('code', null, t))) : el('p', { class: 'note' }, 'No tool call in this reply.'),
+        rp.reasoning_tail ? el('details', null, el('summary', { style: 'cursor:pointer;color:var(--mut);font:400 12px var(--mono)' }, 'reasoning tail'), el('div', { class: 'box' }, rp.reasoning_tail)) : null) : null);
+    $('p-plan').replaceChildren(s.plan && s.plan.length
+      ? el('div', null, el('div', { class: 'chips' }, ...s.plan.map((m, i) => el('span', { class: 'chip' + (i === s.plan_idx ? ' cur' : ''), 'aria-current': i === s.plan_idx ? 'true' : null }, (i + 1) + '. ' + moveText(m)))), el('p', { class: 'note', style: 'margin-top:10px' }, 'Move ' + ((s.plan_idx ?? 0) + 1) + ' of ' + s.plan.length + ' is the one played.'))
+      : none('No plan recorded for this step.'));
+    const ef = Object.entries(s.effects || {});
+    $('p-effects').replaceChildren(ef.length
+      ? el('table', { class: 'small' }, el('thead', null, el('tr', null, el('th', null, 'Action'), el('th', null, 'Tries'), el('th', null, 'Changed the board'))), el('tbody', null, ...ef.map(([k, v]) => el('tr', null, el('td', null, k), el('td', null, String(v[0])), el('td', null, String(v[1]))))))
+      : none('No per-action memory recorded.'));
+  }
+  const oi = s ? s.step : 'start';
+  const stepIdx = s ? s.step : null;
+  $('p-obs').replaceChildren(stepIdx != null && g.obs[stepIdx] != null ? el('pre', { class: 'box', id: 'obstext' }, g.obs[stepIdx])
+    : none(Object.keys(g.obs).length ? 'No observation text for ' + (s ? 'step ' + s.step : 'the start frame') + '.' : 'No .obs.jsonl for this game (the agent writes it with ARC3_TRACE_OBS=1).'));
+  const changed = g.steps.filter(x => x.change && x.change.n > 0).length;
+  $('p-win').replaceChildren(row('Steps shown', String(g.steps.length)), row('Changed the board', String(changed)), row('Changed nothing', String(g.steps.length - changed)));
+}
+
+$('gamesel').addEventListener('change', e => { stop(); state.gameId = e.target.value; state.cur = 0; renderReplay(); });
+$('b-first').onclick = () => { stop(); go(0); };
+$('b-prev').onclick = () => { stop(); go(state.cur - 1); };
+$('b-next').onclick = () => { stop(); go(state.cur + 1); };
+$('b-last').onclick = () => { stop(); go(1e9); };
+$('scrub').addEventListener('input', e => { stop(); go(+e.target.value); });
+$('b-play').onclick = () => {
+  if (state.playing) { stop(); return; }
+  const g = curGame(); if (state.cur >= g.frames.length - 1) go(0);
+  state.playing = true; $('b-play').textContent = 'Pause';
+  timer = setInterval(() => { const gg = curGame(); if (!gg || state.cur >= gg.frames.length - 1) { stop(); return; } go(state.cur + 1); }, 500);
+};
+
+// ---------------------------------------------------------------- compare
+const RESERVED = ['v', 'run_id', 'model', 'bundle_commit', 'games', 'baseline_actions', 'scorecard'];
+function settingsText(m) {
+  const bits = m.model ? [String(m.model)] : [];
+  for (const [k, v] of Object.entries(m)) if (!RESERVED.includes(k) && v !== null && typeof v !== 'object') bits.push(k + ' ' + v);
+  return bits.join(', ') || 'n/a';
+}
+function runStats(run) {
+  const T = run.games.map(g => g.stats), sum = k => T.reduce((a, s) => a + s[k], 0);
+  const actions = sum('actions'), calls = sum('calls');
+  return { games: run.games.length, levels: sum('levels'), of: sum('of'), actions, fb: actions ? sum('fallbacks') / actions : null,
+    tok: calls ? sum('callTok') / calls : null, sec: calls ? sum('callMs') / calls / 1000 : null };
+}
+// index of the best value ('max' or 'min'); none when fewer than two values or all equal
+function bestIdx(vals, dir) {
+  const ok = vals.filter(v => v != null);
+  if (ok.length < 2 || ok.every(v => v === ok[0])) return [];
+  const t = dir === 'max' ? Math.max(...ok) : Math.min(...ok);
+  return vals.map((v, i) => v === t ? i : -1).filter(i => i >= 0);
+}
+function sharedGames() {
+  if (!state.run || !state.runB) return [];
+  const ids = new Set(state.runB.games.map(g => g.id));
+  return state.run.games.map(g => g.id).filter(id => ids.has(id));
+}
+const cgames = () => [state.run, state.runB].map(r => r.games.find(g => g.id === state.cgame));
+const cframes = () => Math.max(...cgames().map(g => g.frames.length));
+// first frame (>= 1) at which both runs played a step and the moves differ; null when they never do
+function divergence(ga, gb) {
+  const n = Math.min(ga.steps.length, gb.steps.length);
+  for (let i = 0; i < n; i++) if (JSON.stringify(ga.steps[i].moves || []) !== JSON.stringify(gb.steps[i].moves || [])) return i + 1;
+  return null;
+}
+
+function renderCompare() {
+  const runs = [state.run, state.runB].filter(Boolean), S = runs.map(runStats);
+  const best = {
+    levels: bestIdx(S.map(s => s.levels), 'max'),
+    actions: S[0].games === (S[1] || {}).games ? bestIdx(S.map(s => s.actions), 'min') : [],
+    fb: bestIdx(S.map(s => s.fb), 'min'), tok: bestIdx(S.map(s => s.tok), 'min'), sec: bestIdx(S.map(s => s.sec), 'min'),
+  };
+  const cell = (k, i, text) => el('td', { class: best[k].includes(i) ? 'best' : null, 'data-col': k }, text, best[k].includes(i) ? el('small', null, 'best') : null);
+  const tb = $('cmp-table').querySelector('tbody'); tb.replaceChildren();
+  runs.forEach((r, i) => {
+    const s = S[i];
+    tb.append(el('tr', { 'data-run': 'AB'[i] },
+      el('td', { style: 'font-weight:500' }, 'AB'[i] + ': ' + r.label),
+      el('td', { style: 'color:var(--mut);font-size:13px;max-width:320px' }, settingsText(r.meta)),
+      el('td', null, String(s.games)),
+      cell('levels', i, s.levels + ' of ' + s.of),
+      cell('actions', i, fmt(s.actions)),
+      cell('fb', i, s.fb == null ? 'n/a' : (100 * s.fb).toFixed(1) + '%'),
+      cell('tok', i, s.tok == null ? 'n/a' : String(Math.round(s.tok))),
+      cell('sec', i, s.sec == null ? 'n/a' : s.sec.toFixed(1) + ' s')));
+  });
+  const shared = sharedGames();
+  $('c-side').hidden = !shared.length;
+  $('c-help').hidden = !!shared.length;
+  if (!shared.length) {
+    stop();
+    $('c-help').replaceChildren(el('p', { class: 'cap' }, 'Same game, two runs side by side'),
+      el('p', { class: 'note', id: 'c-msg' }, state.runB
+        ? 'These two runs share no game, so there is nothing to put side by side. Add a run that played at least one of the same games.'
+        : 'Only one run is loaded. Use "Add a run to compare" above to open a second run folder (a drop works too); you will then get this table with two rows and the same game played by both runs side by side, with the first move where they differ marked.'));
+    return;
+  }
+  if (!shared.includes(state.cgame)) { state.cgame = shared[0]; state.ccur = 0; }
+  $('cgame').replaceChildren(...shared.map(id => el('option', { value: id, selected: id === state.cgame }, id)));
+  const [ga, gb] = cgames(), N = cframes();
+  $('c-scrub').max = N - 1;
+  const d = divergence(ga, gb);
+  $('cmeta').textContent = 'A ' + ga.steps.length + ' steps / B ' + gb.steps.length + ' steps';
+  const pos = f => N > 1 ? 100 * f / (N - 1) : 0;
+  const strip = $('cstrip'); strip.replaceChildren();
+  const last = Math.min(ga.frames.length, gb.frames.length) - 1;
+  const seg = (a, b, color, cls) => b > a ? strip.append(el('i', { class: cls, style: 'left:' + pos(a) + '%;width:' + (pos(b) - pos(a)) + '%;background:' + color })) : 0;
+  seg(0, d == null ? last : d - 1, 'var(--cyan)', 'seg-same');
+  if (d != null) seg(d - 1, last, 'var(--amber)', 'seg-diff');
+  seg(last, N - 1, 'var(--grey)', 'seg-ended');
+  if (d != null) strip.append(el('button', { class: 'divmark', id: 'cdiv', style: 'left:' + pos(d - 1) + '%', 'aria-label': 'First different move at step ' + (d - 1) + ', jump there', onclick: () => { stop(); cgo(d); } }));
+  strip.append(el('u', { class: 'cursor', id: 'ccursor' }));
+  $('clegend').replaceChildren(
+    el('span', null, el('i', { style: 'background:var(--cyan)' }), 'same moves'), el('span', null, el('i', { style: 'background:var(--amber)' }), 'moves differ from here'),
+    el('span', null, el('i', { style: 'background:var(--grey)' }), 'only the longer run is still playing'), el('span', null, el('i', { style: 'background:var(--red)' }), 'first difference'),
+    el('span', { id: 'c-divtext' }, d == null ? 'The runs never play different moves in the steps both have.' : 'First different move: step ' + (d - 1) + '.'));
+  const jump = $('c-jump'); jump.disabled = d == null; jump.dataset.frame = d == null ? '' : d;
+  if (state.ccur >= N) state.ccur = 0;
+  drawCompare();
+}
+
+function cgo(n) { state.ccur = Math.max(0, Math.min(cframes() - 1, n)); drawCompare(); }
+
+function sideCard(i, g, k) {
+  const L = 'AB'[i], ended = k > g.frames.length - 1, f = Math.min(k, g.frames.length - 1), s = stepAt(g, f);
+  paintBoard($('cv' + L), g.frames[f]);
+  const [lab, cls] = s ? (SRC[s.src] || [String(s.src), '']) : ['', ''];
+  const rc = s && s.reply && s.reply.content ? s.reply.content : '';
+  return { ended, f, s, lab, cls, rc };
+}
+function drawCompare() {
+  const gs = cgames(), N = cframes(), k = state.ccur;
+  for (const i of [0, 1]) {
+    const L = 'AB'[i], card = $('cc-' + L), g = gs[i], r = [state.run, state.runB][i];
+    if (!card.querySelector('canvas')) card.append(
+      el('p', { class: 'cap', 'data-role': 'title' }),
+      el('div', { class: 'boardwrap' }, el('canvas', { id: 'cv' + L, width: 64, height: 64, role: 'img', 'aria-label': 'Run ' + L + ' board' })),
+      el('div', { 'data-role': 'info', style: 'display:flex;flex-direction:column;gap:10px;margin-top:14px' }));
+    const { ended, f, s, lab, cls, rc } = sideCard(i, g, k);
+    card.querySelector('[data-role=title]').textContent = L + ': ' + r.label;
+    const moves = s && !ended ? (s.moves || []) : [];
+    fill(card.querySelector('[data-role=info]'),
+      el('div', { class: 'kv', style: 'margin:0' },
+        el('span', { class: 'pill' + (ended ? ' red' : ''), 'data-role': 'stepname' }, ended ? 'ended' : s ? 'step ' + s.step : 'start'),
+        ended ? el('span', { class: 'pill' }, 'holding its last frame, step ' + g.steps[g.steps.length - 1].step) : null,
+        s && !ended ? el('span', { class: 'pill ' + cls, 'data-role': 'src' }, lab) : null,
+        ...moves.map(m => el('span', { class: 'chip cur', 'data-role': 'move' }, moveText(m)))),
+      el('div', { class: 'box reply', 'data-role': 'reply' }, ended ? 'This run has no more steps.' : s ? (rc ? (rc.length > 240 ? rc.slice(0, 240) + '...' : rc) : '(no model reply on this step)') : 'Before the first move.'),
+      el('div', { class: 'note', 'data-role': 'change' }, 'What changed: ' + (ended ? 'nothing, the run is over' : s ? changeLine(s) : 'first frame of this game')));
+  }
+  $('c-scrub').value = k;
+  $('c-first').disabled = $('c-prev').disabled = k === 0; $('c-next').disabled = $('c-last').disabled = k === N - 1;
+  $('c-pos').textContent = k === 0 ? 'start' : 'step ' + (k - 1);
+  const cur = $('ccursor'); if (cur) cur.style.left = (N > 1 ? 100 * k / (N - 1) : 0) + '%';
+}
+
+$('cgame').addEventListener('change', e => { stop(); state.cgame = e.target.value; state.ccur = 0; renderCompare(); });
+$('c-first').onclick = () => { stop(); cgo(0); };
+$('c-prev').onclick = () => { stop(); cgo(state.ccur - 1); };
+$('c-next').onclick = () => { stop(); cgo(state.ccur + 1); };
+$('c-last').onclick = () => { stop(); cgo(1e9); };
+$('c-jump').onclick = () => { stop(); cgo(+$('c-jump').dataset.frame); };
+$('c-scrub').addEventListener('input', e => { stop(); cgo(+e.target.value); });
+$('c-play').onclick = () => {
+  if (state.playing) { stop(); return; }
+  if (state.ccur >= cframes() - 1) cgo(0);
+  state.playing = true; $('c-play').textContent = 'Pause';
+  timer = setInterval(() => { if (state.ccur >= cframes() - 1) { stop(); return; } cgo(state.ccur + 1); }, 500);
+};
+
+// ---------------------------------------------------------------- failures
+function failuresOf(run) {
+  const out = [];
+  for (const g of run.games) g.steps.forEach((s, i) => {
+    const fb = s.src === 'fallback', bad = s.call && s.call.ok === false;
+    if (fb || bad) out.push({ g, s, frame: i + 1, kind: fb ? 'fallback' : 'failed' });
+  });
+  return out;
+}
+function renderFailures() {
+  const all = failuresOf(state.run), p = state.fpick;
+  const nfb = all.filter(x => x.kind === 'fallback').length, nbad = all.length - nfb;
+  $('fsummary').replaceChildren(el('b', { style: 'color:var(--fg);font-weight:600' }, all.length + ' step' + (all.length === 1 ? '' : 's') + ' where the model gave no usable move.'), ' Fallback moves and model calls that failed, across every game in this run. Open one to see the board at that step.');
+  const chips = [['all', 'All  ' + all.length], ['fallback', 'Fallback moves  ' + nfb], ['failed', 'Failed calls  ' + nbad]];
+  $('fchips').replaceChildren(...chips.map(([k, l]) => el('button', { class: 'btn' + (p === k ? ' on' : ''), 'data-pick': k, onclick: () => { state.fpick = k; renderFailures(); } }, l)));
+  const shown = all.filter(x => p === 'all' || x.kind === p);
+  $('fcards').replaceChildren(...(shown.length ? shown.map(x => failCard(x)) : [el('div', { class: 'card ph' }, 'No failures in this run.')]));
+}
+function failCard({ g, s, frame, kind }) {
+  const rp = s.reply;
+  return el('div', { class: 'card fail-card', 'data-game': g.id, 'data-step': s.step, style: 'display:flex;flex-direction:column;gap:12px' },
+    el('div', { style: 'display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between' },
+      el('div', { style: 'display:flex;gap:10px;align-items:center;flex-wrap:wrap' }, el('span', { style: 'font:500 14px var(--mono)' }, g.id), el('span', { style: 'font:400 12px var(--mono);color:var(--mut)' }, 'step ' + s.step),
+        s.call ? el('span', { class: 'pill' }, (s.call.ms / 1000).toFixed(1) + ' s, ' + (s.call.completion_tokens ?? 0) + ' tokens') : null),
+      el('span', { class: 'pill ' + (kind === 'fallback' ? 'amber' : 'red') }, kind === 'fallback' ? 'Fallback move' : 'Model call failed')),
+    el('div', null, el('p', { class: 'cap', style: 'margin-bottom:6px' }, 'Model reply'), el('div', { class: 'box' }, rp ? (rp.content || '(empty)') : '(no reply recorded for this step)')),
+    el('div', { style: 'display:flex;flex-wrap:wrap;gap:12px;align-items:baseline' }, el('span', { class: 'cap', style: 'margin:0' }, 'Tool call'),
+      rp && (rp.tool_calls || []).length ? rp.tool_calls.map(t => el('code', null, t)) : el('code', { style: 'color:var(--dim)' }, 'none')),
+    el('div', { style: 'font:400 13px/1.5 var(--sans);color:var(--mut);border-top:1px solid var(--line2);padding-top:10px' }, el('b', { style: 'color:var(--fg);font-weight:500' }, 'Error: '), s.error || '(none recorded)', el('br'), el('b', { style: 'color:var(--fg);font-weight:500' }, 'Played: '), (s.moves || []).map(moveText).join(', ') || '?', ' (' + s.src + ')'),
+    el('div', null, el('button', { class: 'btn jump', onclick: () => openReplay(g.id, frame) }, 'Open in replay')));
+}
+
+render();
+</script>
+</body>
+</html>

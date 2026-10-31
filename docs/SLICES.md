@@ -284,3 +284,19 @@ is built.
 
 - Aggregation, paired deltas, confidence intervals, and tie-breaking reproduce
   expected results on fixture reports.
+
+
+# Status of the PLAN.md build (2026-10-31)
+
+Built as libraries with tests. The agent loop uses the trace, and the ledger behind `ARC3_LEDGER=1` (off by default,
+not yet measured). The world model, its sandbox and the planner are not in the loop yet.
+
+| Card | State |
+|---|---|
+| ARC-43 lossless transitions, richer observations | Done: `step_trace.py` writes every step (`docs/TRACE.md`), replay-checked exactly on 24 real games. Observation has object list, change regions, motion, counter strips, per-plan results. |
+| ARC-44 world-model contract | Done as `world_model.py` (`predict(frame, move)`, `ModelSpec`, `verify_replay`). Open: ADR-0010 lists a five-method interface (`parse, transition, render, terminal, legal_actions`); a planner needs `terminal`, so this will grow. |
+| ARC-45 hypothesis ledger | Module done (`ledger.py`, computed claims from the trace plus model-written ones) and rendered into the prompt behind `ARC3_LEDGER`. Needs an A/B before it is on by default. |
+| ARC-46 replay verification and planning | Replay verification done; bounded planning not started. |
+| ARC-51 sandbox, revisions, rollback | `sandbox.py` and `RevisionLog` done and tested; not wired together. A first version let allowed modules leak others (`re.enum.sys` reached `os`); modules are now proxies with explicit export lists. Best-effort isolation only. |
+| ARC-49 compaction, event-driven calls, scheduler | Not started. |
+| Replay viewer (new, not on the board before) | MVP done: `tools/replay/index.html`, `make e2e-viewer` (47 checks in headless Chromium). Compare view is next. |

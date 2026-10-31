@@ -56,11 +56,16 @@ class InferenceRequest(WireModel):
 
 
 class FunctionCall(WireModel):
+    # Response-side models tolerate extra keys: servers add fields (OpenRouter sends "index" on tool calls).
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
     name: str
     arguments: str
 
 
 class ToolCall(WireModel):
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
     id: str
     type: Literal["function"] = "function"
     function: FunctionCall
@@ -183,8 +188,11 @@ class OpenAICompatibleClient:
                 for tool in request.tools
             ]
             body["tool_choice"] = "auto"
-        if self.config.provider.value == "openrouter" and sampling.thinking:
-            body["reasoning"] = {"enabled": True}
+        if self.config.provider.value == "openrouter":
+            body["reasoning"] = {"enabled": bool(sampling.thinking)}
+        if self.config.provider.value == "local_vllm" and not sampling.thinking:
+            # The server default is thinking on; this turns it off for this request only.
+            body["chat_template_kwargs"] = {"enable_thinking": False}
         return body
 
     def complete(self, request: InferenceRequest) -> InferenceResponse:

@@ -1,0 +1,16 @@
+{
+ "v": 1,
+ "run_id": "sample-run",
+ "model": "Qwen3.6-27B-FP8 (fixture)",
+ "bundle_commit": "0000000",
+ "games": [
+  "lp85-305b61c3"
+ ],
+ "baseline_actions": {
+  "lp85-305b61c3": [
+   6,
+   12,
+   20
+  ]
+ }
+}

@@ -1,0 +1,19 @@
+{
+ "v": 1,
+ "run_id": "sample-run-b",
+ "model": "Qwen3.6-27B-FP8 (fixture b)",
+ "bundle_commit": "1111111",
+ "max_tokens": 1024,
+ "thinking": false,
+ "timeout_s": 180,
+ "games": [
+  "lp85-305b61c3"
+ ],
+ "baseline_actions": {
+  "lp85-305b61c3": [
+   6,
+   12,
+   20
+  ]
+ }
+}

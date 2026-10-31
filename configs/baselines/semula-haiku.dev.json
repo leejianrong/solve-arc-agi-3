@@ -1,0 +1,9 @@
+{
+  "provider": "local_vllm",
+  "base_url": "http://127.0.0.1:8080/v1",
+  "model": "claude-haiku",
+  "request_timeout_seconds": 600.0,
+  "context_limit": 32768,
+  "max_output_tokens": 1024,
+  "sampling": {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "seed": 0, "thinking": false}
+}

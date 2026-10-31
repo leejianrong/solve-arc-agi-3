@@ -1,0 +1,5 @@
+[
+  {"id": "ab-ledger-off", "seconds": 1200, "env": {"ARC3_LEDGER": "0", "ARC3_THINKING": "0", "ARC3_MAX_OUTPUT_TOKENS": "1024", "ARC3_REQUEST_TIMEOUT": "180", "ARC3_DRY_GAMES": "12"}},
+  {"id": "ab-ledger-on", "seconds": 1200, "env": {"ARC3_LEDGER": "1", "ARC3_THINKING": "0", "ARC3_MAX_OUTPUT_TOKENS": "1024", "ARC3_REQUEST_TIMEOUT": "180", "ARC3_DRY_GAMES": "12"}},
+  {"id": "STOP"}
+]

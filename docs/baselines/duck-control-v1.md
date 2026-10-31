@@ -34,7 +34,7 @@ The Kaggle dataset contains `hf-provenance.json`, which names this older revisio
 
 ### Runtime wheelhouse
 
-- Kaggle dataset: `driessmit1/arc3-vllm-h100-wheelhouse-v3`, dataset ID `10283361`, version 1
+- Kaggle dataset: `mirzamilanfarabi/arc3-vllm-h100-wheelhouse-v3` (Apache-2.0, 2026-09-20 mirror of the original `driessmit1/arc3-vllm-h100-wheelhouse-v3` dataset ID `10283361`, version 1). Its `SHA256SUMS` and `requirements.lock` are byte-identical to the pins below. **Do not use `driessmit1/...`**: its owner deleted and re-created it on 2026-10-05 from an install log (174 wheels, `SHA256SUMS` 20,949 bytes, different lock), so preflight rejects it
 - Published checksum entries: 179
 - `SHA256SUMS`: 21,285 bytes, SHA-256 `44029b360a9c0073e4b0add10703fc3386dc06bf1314f5913a0dad9564144cbb`
 - Core runtime: Python 3.12.12, vLLM 0.19.0, Torch 2.10.0, FlashInfer 0.6.6, Transformers 4.57.6, and Triton 3.6.0
@@ -98,5 +98,5 @@ After attaching the Kaggle datasets, verify the model files with `verify_pinned_
 - [Duck harness repository](https://github.com/Tufalabs/duck-harness)
 - [Duck technical report](https://tufalabs.ai/research/duck-harness/)
 - [Pinned Qwen3.6 27B FP8 revision](https://huggingface.co/vrfai/Qwen3.6-27B-FP8/tree/076636763143ca2b7cf0d66e16a09c2a0a689dfa)
-- [Kaggle vLLM wheelhouse](https://www.kaggle.com/datasets/driessmit1/arc3-vllm-h100-wheelhouse-v3)
+- [Kaggle vLLM wheelhouse](https://www.kaggle.com/datasets/mirzamilanfarabi/arc3-vllm-h100-wheelhouse-v3)
 - [Kaggle Qwen model snapshot](https://www.kaggle.com/datasets/driessmit1/vrfai-qwen3-6-27b-fp8-hf-snapshot)

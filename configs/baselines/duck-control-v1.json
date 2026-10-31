@@ -79,7 +79,7 @@
   },
   "wheelhouse": {
     "kaggle_dataset": {
-      "ref": "driessmit1/arc3-vllm-h100-wheelhouse-v3",
+      "ref": "mirzamilanfarabi/arc3-vllm-h100-wheelhouse-v3",
       "id": 10283361,
       "version": 1,
       "last_updated": "2026-05-01T07:00:54.597Z",
@@ -90,7 +90,7 @@
       "sha256": "44029b360a9c0073e4b0add10703fc3386dc06bf1314f5913a0dad9564144cbb",
       "size_bytes": 21285
     },
-    "checksum_manifest_url": "https://www.kaggle.com/api/v1/datasets/download/driessmit1/arc3-vllm-h100-wheelhouse-v3/SHA256SUMS",
+    "checksum_manifest_url": "https://www.kaggle.com/api/v1/datasets/download/mirzamilanfarabi/arc3-vllm-h100-wheelhouse-v3/SHA256SUMS",
     "checksum_entry_count": 179,
     "packages": [
       {

@@ -122,3 +122,45 @@ def test_openrouter_request_explicitly_enables_reasoning(
     )
 
     assert server.requests[0]["reasoning"] == {"enabled": True}
+
+
+def test_local_vllm_thinking_is_a_per_request_switch(tmp_path: Path) -> None:
+    config = _fake_config(tmp_path).model_copy(update={"provider": Provider.LOCAL_VLLM})
+    request = InferenceRequest(messages=(ChatMessage(role="user", content="x"),))
+
+    on = OpenAICompatibleClient(config)._request_body(request)
+    assert "chat_template_kwargs" not in on  # server default: thinking on
+
+    no_think = config.model_copy(
+        update={"sampling": config.sampling.model_copy(update={"thinking": False})}
+    )
+    off = OpenAICompatibleClient(no_think)._request_body(request)
+    assert off["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test_a_tool_call_with_extra_server_fields_is_accepted() -> None:
+    from solve_arc_agi_3.inference import _parse_chat_completion
+
+    raw = {
+        "choices": [
+            {
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "index": 0,
+                            "id": "call_1",
+                            "function": {
+                                "name": "python",
+                                "arguments": '{"code": "action([1])"}',
+                                "extra": True,
+                            },
+                        }
+                    ],
+                }
+            }
+        ],
+    }
+    response = _parse_chat_completion(raw, elapsed_seconds=1.0)
+    assert response.tool_calls[0].function.name == "python"
