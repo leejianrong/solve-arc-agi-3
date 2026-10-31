@@ -7,7 +7,7 @@ click targets are explicit), and a description of what the last action changed. 
 from __future__ import annotations
 
 from collections import Counter, deque
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 Grid = tuple[tuple[int, ...], ...]
@@ -91,7 +91,12 @@ def segment(grid: Grid, *, background: int | None = None) -> list[Region]:
     return sorted(regions, key=lambda r: (r.y0, r.x0))
 
 
-def describe_objects(grid: Grid, *, limit: int = MAX_OBJECTS) -> str:
+def describe_objects(
+    grid: Grid,
+    *,
+    limit: int = MAX_OBJECTS,
+    counters: Sequence[tuple[int, int, int, int]] = (),
+) -> str:
     if not grid:
         return "(no grid)"
     bg = background_color(grid)
@@ -103,7 +108,10 @@ def describe_objects(grid: Grid, *, limit: int = MAX_OBJECTS) -> str:
     )
     shown = sorted(shown, key=lambda r: (r.y0, r.x0))
     lines = [f"background color {bg}; {len(regions)} objects (x = column, y = row):"]
-    lines += [f"- {r.describe()}" for r in shown]
+    lines += [
+        f"- {r.describe()}{COUNTER_LABEL if is_counter_region(r, counters, grid) else ''}"
+        for r in shown
+    ]
     if len(regions) > limit:
         lines.append(f"- ... {len(regions) - limit} smaller objects not listed")
     return "\n".join(lines)
@@ -192,6 +200,64 @@ def region_key(
         if x0 >= width - EDGE or x1 < EDGE:
             return ("col", x0, x1)
     return ("box", x0, y0, x1, y1)
+
+
+COUNTER_LABEL = " (counter, not a goal)"
+MAX_STRIP_THICKNESS = 2
+
+
+def _thin_edge_strip(
+    x0: int, y0: int, x1: int, y1: int, width: int, height: int
+) -> bool:
+    """Touches the border and is at most MAX_STRIP_THICKNESS cells thick measured away from that border."""
+
+    across_rows = (y0 == 0 or y1 == height - 1) and y1 - y0 + 1 <= MAX_STRIP_THICKNESS
+    across_cols = (x0 == 0 or x1 == width - 1) and x1 - x0 + 1 <= MAX_STRIP_THICKNESS
+    return across_rows or across_cols
+
+
+def counter_strips(before: Grid, after: Grid) -> list[tuple[int, int, int, int]]:
+    """Boxes (x0, y0, x1, y1) of border strips that changed monotonically between two frames.
+
+    A strip qualifies on its first change: it touches the grid edge, is 1-2 cells thick, and every changed
+    cell made the same colour transition (a bar shrinking into the background or filling from it).
+    """
+
+    if not before or not after or changed_count(before, after) <= 0:
+        return []
+    height, width = len(after), len(after[0])
+    found = []
+    for x0, y0, x1, y1, _cells in change_boxes(before, after):
+        if not _thin_edge_strip(x0, y0, x1, y1, width, height):
+            continue
+        moves = {
+            (before[y][x], after[y][x])
+            for y in range(y0, y1 + 1)
+            for x in range(x0, x1 + 1)
+            if before[y][x] != after[y][x]
+        }
+        if len(moves) == 1:
+            found.append((x0, y0, x1, y1))
+    return found
+
+
+def is_counter_region(
+    region: Region, counters: Sequence[tuple[int, int, int, int]], grid: Grid
+) -> bool:
+    """True when `region` is a thin edge strip touching (or next to) one of the counter boxes."""
+
+    if not counters or not grid:
+        return False
+    height, width = len(grid), len(grid[0])
+    if not _thin_edge_strip(region.x0, region.y0, region.x1, region.y1, width, height):
+        return False
+    return any(
+        region.x0 <= x1 + 1
+        and region.x1 >= x0 - 1
+        and region.y0 <= y1 + 1
+        and region.y1 >= y0 - 1
+        for x0, y0, x1, y1 in counters
+    )
 
 
 def describe_key(key: tuple[object, ...]) -> str:

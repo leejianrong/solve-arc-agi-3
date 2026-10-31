@@ -21,11 +21,13 @@ from typing import Any
 from .agent import (
     ActionDecision,
     BaselineAgentCore,
+    Observation,
     OfficialAgentAdapter,
     _state_text,
     default_arcengine_action_mapper,
 )
 from .inference import InferenceClient, InferenceRequest, InferenceResponse
+from .observation import untried_clicks
 from .step_trace import RunTrace
 
 logger = logging.getLogger(__name__)
@@ -76,17 +78,56 @@ class RunLimits:
         return True
 
 
-def fallback_decision(available_actions: tuple[int, ...], step: int) -> ActionDecision:
-    """Deterministic non-RESET move that cycles through what the game offers.
+def _label(name: str, data: Mapping[str, int]) -> str:
+    return f"{name} at x={data['x']},y={data['y']}" if data else name
 
-    Clicks scan the grid (co-prime strides) instead of repeating one cell, so click-only games at least
-    probe different places.
-    """
 
+def _cycle_decision(available_actions: tuple[int, ...], step: int) -> ActionDecision:
     choices = [a for a in available_actions if a != 0] or [1]
     action_id = choices[step % len(choices)]
     data = {"x": (step * 13) % 64, "y": (step * 29) % 64} if action_id == 6 else {}
     return ActionDecision(name=f"ACTION{action_id}", data=data, source="fallback")
+
+
+def fallback_decision(
+    available_actions: tuple[int, ...],
+    step: int,
+    core: Any = None,
+    observation: Observation | None = None,
+) -> ActionDecision:
+    """Deterministic non-RESET move that cycles through what the game offers.
+
+    Clicks scan the grid (co-prime strides) instead of repeating one cell, so click-only games at least
+    probe different places. With the agent core and the current observation it also uses what the core
+    knows: untried actions first, then untried object centres, and never a move the core calls dead here
+    (``core.dead_moves(observation)``, looked up duck-typed; absent means no dead moves known).
+    """
+
+    if core is None or observation is None:
+        return _cycle_decision(available_actions, step)
+    getter = getattr(core, "dead_moves", None)
+    try:
+        dead = set(getter(observation)) if callable(getter) else set()
+    except Exception:  # noqa: BLE001  a fallback must never raise
+        dead = set()
+    tried = getattr(core, "_effects", None) or {}
+    plain = [a for a in available_actions if a not in (0, 6)]
+    for a in plain:
+        if f"ACTION{a}" not in tried and f"ACTION{a}" not in dead:
+            return ActionDecision(name=f"ACTION{a}", source="fallback")
+    if 6 in available_actions and observation.grid:
+        clicks = list(getattr(core, "_clicks", None) or [])
+        for r in untried_clicks(observation.grid, clicks, limit=8):
+            x, y = r.center
+            if _label("ACTION6", {"x": x, "y": y}) not in dead:
+                return ActionDecision(
+                    name="ACTION6", data={"x": x, "y": y}, source="fallback"
+                )
+    for i in range(max(len([a for a in available_actions if a != 0]), 1) * 64):
+        cand = _cycle_decision(available_actions, step + i)
+        if _label(cand.name, cand.data) not in dead:
+            return cand
+    return _cycle_decision(available_actions, step)
 
 
 def _reply_fields(
@@ -277,12 +318,14 @@ def make_agent_class(
                     describe_reply(core.last_response),
                     exc_info=self._fallbacks <= 2,
                 )
+                observation = self._adapter.observation(frames, latest_frame)
                 decision = fallback_decision(
-                    tuple(latest_frame.available_actions), self._fallbacks
+                    tuple(latest_frame.available_actions),
+                    self._fallbacks,
+                    core,
+                    observation,
                 )
-                core.note_move(
-                    self._adapter.observation(frames, latest_frame), decision
-                )
+                core.note_move(observation, decision)
                 call, reply = _reply_fields(core.last_response)
                 return action_mapper(decision), {
                     "src": "fallback",

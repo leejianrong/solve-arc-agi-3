@@ -55,3 +55,44 @@ def test_change_description_names_where_and_what() -> None:
 
 def test_encoding_is_deterministic() -> None:
     assert describe_objects(GRID) == describe_objects(GRID)
+
+
+def _bar(
+    filled: int, width: int = 20, thickness: int = 1
+) -> tuple[tuple[int, ...], ...]:
+    rows = [[0] * width for _ in range(width)]
+    for y in range(width - thickness, width):
+        for x in range(filled):
+            rows[y][x] = 5
+    rows[3][3] = 2  # an unrelated object
+    return tuple(tuple(r) for r in rows)
+
+
+def test_shrinking_edge_bar_is_a_counter_on_first_change() -> None:
+    from solve_arc_agi_3.observation import counter_strips
+
+    assert counter_strips(_bar(10), _bar(9)) == [(9, 19, 9, 19)]
+    assert counter_strips(_bar(10, thickness=2), _bar(9, thickness=2))  # 2 thick
+    assert counter_strips(_bar(5), _bar(6))  # filling
+
+
+def test_non_counter_changes_are_not_flagged() -> None:
+    from solve_arc_agi_3.observation import counter_strips
+
+    thick = counter_strips(_bar(10, thickness=3), _bar(9, thickness=3))
+    assert thick == []
+    moved = list(map(list, _bar(10)))
+    moved[3][3], moved[8][8] = 0, 2  # interior object moved, not on the edge
+    assert counter_strips(_bar(10), tuple(map(tuple, moved))) == []
+
+
+def test_object_list_labels_counter() -> None:
+    from solve_arc_agi_3.observation import counter_strips, describe_objects
+
+    after = _bar(9)
+    text = describe_objects(after, counters=counter_strips(_bar(10), after))
+    bar_line = next(ln for ln in text.splitlines() if "color 5" in ln)
+    assert bar_line.endswith("(counter, not a goal)")
+    other = next(ln for ln in text.splitlines() if "color 2" in ln)
+    assert "counter" not in other
+    assert "counter" not in describe_objects(after)
