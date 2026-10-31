@@ -47,7 +47,7 @@ older `trace.py` is only the smoke test's event log), `ledger.py` (hypothesis le
 replay check) and `sandbox.py` (runs model-written code; not wired in yet). `kaggle/run/` is what runs in the
 notebook (`main.py`), `scripts/` holds tooling (`local_play.py`, RunPod lab), `tools/replay/index.html` is the trace
 viewer (`make e2e-viewer` tests it in a real browser). Switches: `ARC3_TRACE_DIR` (write traces), `ARC3_LEDGER=1`
-(ledger block in the prompt), `ARC3_PROMPT_CHARS=n` (prompt budget), `ARC3_EVENTS=1`, `ARC3_TOOLS=1`, `ARC3_WORLD_MODEL=1` (needs tools); all off by default.
+(ledger block in the prompt), `ARC3_PROMPT_CHARS=n` (prompt budget), `ARC3_EVENTS=1`, `ARC3_TOOLS=1`, `ARC3_WORLD_MODEL=1` (needs tools), `ARC3_NAV=1` (state graph, reachability and loop warning in the STATUS header); all off by default.
 
 ## Git
 

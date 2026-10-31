@@ -160,6 +160,7 @@ def agent_switches(env: Mapping[str, str] | None = None) -> dict[str, Any]:
         "events": source.get("ARC3_EVENTS") == "1",
         "tools": source.get("ARC3_TOOLS") == "1",
         "world_model": source.get("ARC3_WORLD_MODEL") == "1",
+        "nav": source.get("ARC3_NAV") == "1",
     }
 
 
@@ -175,6 +176,7 @@ def make_agent_class(
     events: bool | None = None,
     tools: bool | None = None,
     world_model: bool | None = None,
+    nav: bool | None = None,
 ) -> type:
     """Build the submission agent on top of the official ``Agent`` (or a test double).
 
@@ -187,6 +189,7 @@ def make_agent_class(
     use_events = env["events"] if events is None else events
     use_tools = env["tools"] if tools is None else tools
     use_world_model = env["world_model"] if world_model is None else world_model
+    use_nav = env["nav"] if nav is None else nav
     if use_world_model and not use_tools:
         raise ValueError("ARC3_WORLD_MODEL=1 requires ARC3_TOOLS=1")
     limiter = threading.BoundedSemaphore(limits.max_concurrent_calls)
@@ -204,6 +207,7 @@ def make_agent_class(
                     events=use_events,
                     tools=use_tools,
                     world_model=use_world_model,
+                    nav=use_nav,
                 ),
                 action_mapper=action_mapper,
             )

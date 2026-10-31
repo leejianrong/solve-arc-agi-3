@@ -253,6 +253,7 @@ def test_switches_come_from_the_environment_and_default_to_off() -> None:
         "events": False,
         "tools": False,
         "world_model": False,
+        "nav": False,
     }
     assert agent_switches(
         {
@@ -260,8 +261,15 @@ def test_switches_come_from_the_environment_and_default_to_off() -> None:
             "ARC3_EVENTS": "1",
             "ARC3_TOOLS": "1",
             "ARC3_WORLD_MODEL": "1",
+            "ARC3_NAV": "1",
         }
-    ) == {"prompt_chars": 4000, "events": True, "tools": True, "world_model": True}
+    ) == {
+        "prompt_chars": 4000,
+        "events": True,
+        "tools": True,
+        "world_model": True,
+        "nav": True,
+    }
     assert (
         agent_switches({"ARC3_PROMPT_CHARS": "", "ARC3_EVENTS": "0"})["events"] is False
     )
@@ -283,7 +291,13 @@ def test_cleanup_closes_the_core_and_calls_the_base(
         def cleanup(self, *args: object, **kwargs: object) -> None:
             calls.append("base")
 
-    for name in ("ARC3_EVENTS", "ARC3_TOOLS", "ARC3_WORLD_MODEL", "ARC3_PROMPT_CHARS"):
+    for name in (
+        "ARC3_EVENTS",
+        "ARC3_TOOLS",
+        "ARC3_WORLD_MODEL",
+        "ARC3_PROMPT_CHARS",
+        "ARC3_NAV",
+    ):
         monkeypatch.delenv(name, raising=False)
     agent = make_agent_class(
         WithCleanup, limits=limits(), client=OkClient(), action_mapper=mapper

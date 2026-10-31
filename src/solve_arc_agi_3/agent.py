@@ -44,6 +44,9 @@ from .observation import (
     segment,
     untried_clicks,
 )
+from .reachability import MotionModel, learn_motion, mover_parts
+from .reachability import summary as reach_summary
+from .state_graph import StateGraph
 from .step_trace import encode_rows, grid_rows
 
 # Loop-breaker: a move is "dead" after this many no-ops on the identical board, or (clicks only) this many
@@ -234,6 +237,49 @@ def _is_click_name(value: object) -> bool:
     return isinstance(value, str) and value.upper() == "ACTION6"
 
 
+MAX_RUN = 12
+MAX_RUN_PLAN = 16
+RUN_SOURCE = "python_run"
+
+
+def _expand_runs(node: ast.expr, runs: list[int]) -> list[ActionDecision]:
+    """A list that mixes literals with ``run(move, n)``: n copies of the move, tagged as one run."""
+
+    elts = node.elts if isinstance(node, (ast.List, ast.Tuple)) else [node]
+    out: list[ActionDecision] = []
+    for elt in elts:
+        if (
+            isinstance(elt, ast.Call)
+            and isinstance(elt.func, ast.Name)
+            and elt.func.id == "run"
+            and len(elt.args) == 2
+        ):
+            try:
+                move = ast.literal_eval(elt.args[0])
+                n = ast.literal_eval(elt.args[1])
+            except (ValueError, TypeError, SyntaxError):
+                continue
+            if _is_click_name(move) or type(n) is not int:
+                continue
+            base = _decision_from_literal(move)
+            if base is None:
+                continue
+            runs[0] += 1
+            tag = f"{RUN_SOURCE}{runs[0]}"
+            out.extend(
+                base.model_copy(update={"source": tag})
+                for _ in range(max(1, min(n, MAX_RUN)))
+            )
+            continue
+        try:
+            decision = _decision_from_literal(ast.literal_eval(elt))
+        except (ValueError, TypeError, SyntaxError):
+            continue
+        if decision is not None:
+            out.append(decision)
+    return out
+
+
 def _actions_from_python(code: str) -> list[ActionDecision]:
     """Parse the narrow ``action(...)`` tool surface without executing code.
 
@@ -246,6 +292,7 @@ def _actions_from_python(code: str) -> list[ActionDecision]:
     except SyntaxError:
         return []
     actions: list[ActionDecision] = []
+    runs = [0]
     for node in ast.walk(module):
         if not isinstance(node, ast.Call):
             continue
@@ -256,6 +303,8 @@ def _actions_from_python(code: str) -> list[ActionDecision]:
         try:
             value = ast.literal_eval(node.args[0])
         except (ValueError, TypeError, SyntaxError):
+            expanded = _expand_runs(node.args[0], runs)
+            actions.extend(expanded)
             continue
         if _is_click_name(value):
             coords: list[object] = []
@@ -316,7 +365,8 @@ def parse_action_decisions(
             if d.action_id in available_actions
         ]
         if legal:
-            return legal[:limit]
+            runs = any(d.source.startswith(RUN_SOURCE) for d in legal)
+            return legal[: max(limit, MAX_RUN_PLAN) if runs and limit > 1 else limit]
 
     for call in re.finditer(r"action\((?:[^()]|\([^()]*\))*\)", response.content):
         written = [
@@ -325,7 +375,8 @@ def parse_action_decisions(
             if d.action_id in available_actions
         ]
         if written:
-            return written[:limit]
+            runs = any(d.source.startswith(RUN_SOURCE) for d in written)
+            return written[: max(limit, MAX_RUN_PLAN) if runs and limit > 1 else limit]
 
     for match in reversed(list(_ACTION_PATTERN.finditer(response.content))):
         decision = ActionDecision(name=match.group(1).upper(), source="assistant_text")
@@ -356,7 +407,8 @@ PYTHON_TOOL = ToolDefinition(
         "Play moves. Call action(...) once with a list of up to 5 moves played in order, for example "
         "action([1, 1, 4]) or action([{'action': 6, 'x': 12, 'y': 30}, 2]). Moves are action numbers "
         "(1-5, 7) or click objects {'action': 6, 'x': column, 'y': row} with coordinates 0-63. "
-        "Only actions listed as available can be used."
+        "Only actions listed as available can be used. run(1, 8) inside the list repeats a move up to 8 times, "
+        "stopping at the first move that changes nothing."
     ),
     parameters={
         "type": "object",
@@ -381,7 +433,8 @@ most cells.
 
 Reply with one python tool call and nothing else: call action(...) with a list of up to 5 moves to play in order,
 for example action([1, 1, 4]) or action([{"action": 6, "x": 12, "y": 30}]). Use one move while exploring and a
-longer list only when you are sure of the controls."""
+longer list only when you are sure of the controls. Inside the list, run(1, 8) repeats ACTION1 up to 8 times and
+stops at the first move that changes nothing."""
 
 
 MAX_TOOL_CALLS = 3  # hypothesis()/evidence() calls read from one reply
@@ -483,11 +536,20 @@ class BaselineAgentCore:
         events: bool = False,
         tools: bool = False,
         world_model: bool = False,
+        nav: bool = False,
     ) -> None:
         if world_model and not tools:
             raise ValueError("the world_model switch requires the tools switch")
         self._prompt_chars = prompt_chars
         self._events = events
+        self._nav = nav
+        self._graph = StateGraph()
+        self._board_window: list[int] = []
+        self._motion_hist: list[tuple[Any, str, Any]] = []
+        self._motion = MotionModel()
+        self._motion_at = 0
+        self._pending_source = ""
+        self._blocked_run = ""
         self._tools = tools
         self._world_model = world_model
         self._tool, self._system_prompt = tool_texts(tools, world_model)
@@ -734,7 +796,55 @@ class BaselineAgentCore:
                     "counters": self.last_settled["counters"],
                 }
             )
+        if self._nav:
+            self._nav_settle(before, label, after, gained)
+        if self._pending_source.startswith(RUN_SOURCE) and (
+            raw == 0 or (raw > 0 and (not changed or strip_only))
+        ):
+            self._blocked_run = self._pending_source
+            while self._queue and self._queue[0].source == self._blocked_run:
+                self._queue.pop(0)
         self._pending = None
+
+    def _nav_settle(self, before: Any, label: str, after: Any, gained: int) -> None:
+        hb, ha = hash(before), hash(after)
+        if not self._board_window:
+            self._graph.visit(hb)
+            self._board_window = [hb]
+        if gained > 0:
+            self._graph.visit(ha)
+            self._board_window = [ha]
+            self._motion_hist.clear()
+            self._motion = MotionModel()
+            self._motion_at = 0
+            return
+        self._graph.add(hb, label, ha)
+        self._board_window = (self._board_window + [ha])[-8:]
+        self._motion_hist.append((before, label, after))
+        del self._motion_hist[:-40]
+        if len(self._motion_hist) - self._motion_at >= 3 or not self._motion.steps:
+            self._motion = learn_motion(self._motion_hist)
+            self._motion_at = len(self._motion_hist)
+
+    def _nav_text(self, observation: Observation) -> str:
+        labels = [
+            f"ACTION{a}" for a in observation.available_actions if a not in (0, 6)
+        ]
+        lines = [self._graph.summary(hash(observation.grid), labels, max_chars=170)]
+        model = self._motion
+        if model.steps and model.mover:
+            parts = mover_parts(observation.grid, model.mover)
+            if parts:
+                lines.append(
+                    reach_summary(
+                        observation.grid, parts, model, max_objects=4, max_chars=200
+                    )
+                )
+        if StateGraph.is_loop(self._board_window):
+            lines.append(
+                "WARNING: a board repeated within your last 8 moves (loop); try a different route."
+            )
+        return "\n".join(lines) + "\n"
 
     def _effects_text(self) -> str:
         if not self._effects:
@@ -753,8 +863,9 @@ class BaselineAgentCore:
         return "; ".join(parts)
 
     def _status_header(self, observation: Observation) -> str:
+        nav = self._nav_text(observation) if self._nav else ""
         if not self._move_status:
-            return self._untried_line(observation)
+            return self._untried_line(observation) + nav
         m = self._mover
         where = (
             f"Controlled object (colour {m.color}, size {m.size}) is at x{m.x0}-{m.x1} y{m.y0}-{m.y1}, "
@@ -762,7 +873,7 @@ class BaselineAgentCore:
             if m
             else "No object has been seen moving yet. "
         )
-        return f"STATUS: {where}Last move: {self._move_status}.\n{self._untried_line(observation)}"
+        return f"STATUS: {where}Last move: {self._move_status}.\n{self._untried_line(observation)}{nav}"
 
     def _observation_text(self, observation: Observation) -> str:
         names = ", ".join(
@@ -1425,6 +1536,7 @@ class BaselineAgentCore:
         if decision.data:
             self._clicks.append((decision.data["x"], decision.data["y"]))
         self._pending = (self._label(decision), decision.name)
+        self._pending_source = decision.source
 
     def request_completion(
         self, observation: Observation

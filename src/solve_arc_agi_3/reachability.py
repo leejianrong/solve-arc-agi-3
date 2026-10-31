@@ -36,7 +36,7 @@ class MotionModel:
     blocked_colours: frozenset[int] = frozenset()
 
 
-def _parts(grid: Grid, mover: Collection[tuple[int, int]]) -> list[Region]:
+def mover_parts(grid: Grid, mover: Collection[tuple[int, int]]) -> list[Region]:
     wanted = Counter(mover)
     out = []
     for r in segment(grid):
@@ -44,6 +44,9 @@ def _parts(grid: Grid, mover: Collection[tuple[int, int]]) -> list[Region]:
             wanted[(r.color, r.size)] -= 1
             out.append(r)
     return out
+
+
+_parts = mover_parts  # old private name
 
 
 def footprint(parts: Iterable[Region]) -> Rect | None:
@@ -109,14 +112,14 @@ def learn_motion(history: Iterable[Move]) -> MotionModel:
         known = model.steps.get(label)
         if not model.mover or object_motion(before, after, limit=1):
             if known and model.mover:
-                rect = footprint(_parts(before, model.mover))
+                rect = footprint(mover_parts(before, model.mover))
                 if rect:
                     passed |= _entered_colours(before, rect, known)
             continue
         if not _only_counters_changed(before, after):
             continue
         model.blocked[label] = model.blocked.get(label, 0) + 1
-        rect = footprint(_parts(before, model.mover))
+        rect = footprint(mover_parts(before, model.mover))
         if known and rect:
             stopped |= _entered_colours(before, rect, known)
     model.blocked_colours = frozenset(stopped - passed - {c for c, _ in model.mover})

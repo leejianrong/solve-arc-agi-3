@@ -197,6 +197,7 @@ env.update(
     ARC3_EVENTS=os.getenv("ARC3_EVENTS", "0"),
     ARC3_TOOLS=os.getenv("ARC3_TOOLS", "0"),
     ARC3_WORLD_MODEL=os.getenv("ARC3_WORLD_MODEL", "0"),
+    ARC3_NAV=os.getenv("ARC3_NAV", "0"),
     ARC3_THINKING=os.getenv("ARC3_THINKING", "0"),
     ARC3_MAX_OUTPUT_TOKENS=os.getenv("ARC3_MAX_OUTPUT_TOKENS", "1024"),
     ARC3_REQUEST_TIMEOUT=os.getenv("ARC3_REQUEST_TIMEOUT", "180"),
