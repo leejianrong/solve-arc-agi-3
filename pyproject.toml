@@ -19,6 +19,7 @@ solve-arc-agi-3 = "solve_arc_agi_3.baseline_cli:main"
 
 [dependency-groups]
 dev = [
+    "matplotlib>=3.9",
     "mypy>=1.15.0",
     "pytest>=8.4.1",
     "ruff>=0.11.4",

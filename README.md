@@ -1,82 +1,71 @@
 # solve-arc-agi-3
 
-A custom agent harness for [ARC-AGI-3](https://three.arcprize.org), built around an
-open-weight ~27-30B model, targeting Kaggle's ARC Prize 2026 submission constraints
-(no internet at scoring, a wall-clock budget, GPU assigned by Kaggle).
+An agent that plays [ARC-AGI-3](https://three.arcprize.org) games with an open-weight 27B model (Qwen3.6-27B-FP8 on
+vLLM), built to run offline on a Kaggle GPU for the ARC Prize 2026 competition.
 
 ```mermaid
 flowchart LR
-    C[Control manifest\nduck-control-v1.json] --> T[Provider-agnostic\ninference transport]
-    T -->|fake / OpenRouter / RunPod / local vLLM| M[Qwen 3.6 27B FP8\nserved by vLLM]
-    M --> A[Agent loop\nchoose_action / is_done]
-    A --> G[ARC-AGI-3 game engine]
-    G --> A
-    A --> R[Run-scoped trace\nruns/&lt;id&gt;/trace.jsonl]
+    G[Game engine\nor Kaggle gateway] -->|frame| O[Observation text\nobjects, diff, motion, status]
+    O --> M[Qwen3.6-27B-FP8\nvLLM, one tool call per turn]
+    M -->|"action([...])"| A[Agent core\nplans, effect memory, fallbacks]
+    A --> G
+    A --> T[Step trace\nJSONL, replay viewer]
 ```
 
-One control manifest pins the model, vLLM flags, and agent contract; only the
-transport underneath changes between a no-network fake server, a dev-only
-OpenRouter check, and the pinned RunPod/Kaggle vLLM deployment. See
-[`docs/baselines/qwen36-vllm-artifact.md`](docs/baselines/qwen36-vllm-artifact.md)
-for exactly what each environment does and does not prove.
+## Status (2026-11-01)
 
-Planning artifacts (read these before making architectural changes):
+- **Scores:** two Kaggle submissions, both **0.00** (refs 57788190, 57844835). Offline dry runs on 12 public games
+  cleared 0 to 3 levels. We have never seen the logs of a competition rerun, so the cause is unknown
+  ([`docs/baselines/baseline-report.md`](docs/baselines/baseline-report.md)).
+- **What works:** the pinned offline stack, the agent loop, per-step traces with a browser replay viewer, a free
+  scripted client, and Haiku-via-[semula](https://github.com/leejianrong/semula) players for behaviour tests.
+- **What does not:** the agent plays movement games close to random and rarely finds a goal. The hypothesis
+  ledger, world model and planner exist but are off by default and unproven on real games.
+- Public notebooks from the top teams use a stronger model, images and thinking; see
+  [`docs/baselines/kaggle-submission-checklist.md`](docs/baselines/kaggle-submission-checklist.md).
 
-- `docs/PLAN.md` — the agreed plan: problem, scope, requirements, shape.
-- `docs/adr/` — the individual decisions and why.
-- `docs/SLICES.md` — what's built vs. planned, one vertical increment at a time.
-- `docs/QUESTIONS.md` — the full decision register.
-- `docs/research/2026-09-20-current-state-and-strategy.md`: current research and competition strategy.
-- `docs/research/arc-agi-3-solve-strategy.md`: historical August research snapshot.
-- `docs/baselines/duck-control-v1.md`: pinned Duck control and clean-room boundary.
+## Quick start
 
-For how an agent should work in this repo, see [`AGENTS.md`](AGENTS.md).
-
-## Commands
+Needs [uv](https://docs.astral.sh/uv/) and, for the local games, the sibling repo `../play-arc-agi-3` with its `.venv`.
 
 ```sh
-make install   # uv sync (dev group)
-make test      # pytest
-make lint      # ruff check + ruff format --check
-make type      # mypy --strict over src
-make check     # lint + type + test
-make smoke     # deterministic OpenAI-compatible smoke; no GPU or network
+make install    # uv sync
+make check      # ruff, mypy --strict, pytest (no GPU, no network)
+
+# free scripted client through the real agent and scorer, with traces
+PYTHONPATH=src ../play-arc-agi-3/.venv/bin/python scripts/local_play.py \
+  --fake --games 6 --steps 60 --trace-dir /tmp/traces
 ```
 
-The baseline operator commands and the boundary between fake, OpenRouter,
-RunPod, and offline Kaggle evidence are documented in
-[`docs/baselines/qwen36-vllm-artifact.md`](docs/baselines/qwen36-vllm-artifact.md).
+Open `tools/replay/index.html` in a browser, choose the run folder under `/tmp/traces`, and step through the game.
 
-## Credentials
+## Usage
 
-`make check` and `make smoke` need none. Everything else that touches a real
-provider or GPU reads its credential from the environment, never from a
-config file. Copy [`.env.example`](.env.example) to `.env`, fill in the keys
-you need, and source it yourself (see the file for how) before running
-`provider-smoke`, provisioning RunPod, or fetching the pinned Kaggle datasets.
+- **Compare variants on Kaggle (free GPU):** `scripts/kaggle_dev.sh <name> ARC3_NAV=1`, then
+  `python3 scripts/summarize_run.py build/dev-runs/<name>`.
+- **Behaviour tests with Haiku players:** [`docs/SEMULA-HAIKU-LOOP.md`](docs/SEMULA-HAIKU-LOOP.md); compare runs with
+  `scripts/bench_summary.py label=dir ...`.
+- **Failure clusters of a run:** `PYTHONPATH=src python3 scripts/cluster_failures.py <trace dir>`.
+- **Switches (all off by default):** `ARC3_LEDGER`, `ARC3_NAV`, `ARC3_EVENTS`, `ARC3_TOOLS`, `ARC3_WORLD_MODEL`,
+  `ARC3_PROMPT_CHARS`. They are read in `src/solve_arc_agi_3/kaggle_agent.py`.
 
-## Status
+## Credentials and rented compute
 
-The plan was revised on 2026-09-20 after the Milestone 1 Duck harness and newer
-ARC-AGI-3 harness results became available. Slice V1 now reproduces the pinned
-Duck/Qwen 3.6 27B FP8/vLLM baseline on Kaggle before adding a hybrid hypothesis
-ledger and replay-verified executable world model. See `docs/SLICES.md`.
+`make check` needs none. Copy [`.env.example`](.env.example) to `.env` for Kaggle and RunPod keys and source it yourself.
+Never call a hosted model API: tests of model behaviour use semula and Haiku. RunPod jobs follow
+[`AGENTS.md`](AGENTS.md) and start with `scripts/runpod_launch_lab.sh` plus its `watch` command.
 
-`notebooks/slice1_phase0_baseline.ipynb` and
-`configs/model_configs.local.yaml` are superseded GGUF/Ollama prototypes retained
-for history; ADR-0009 defines their replacement.
+## Docs
+
+[`docs/PLAN.md`](docs/PLAN.md) (design), [`docs/SLICES.md`](docs/SLICES.md) (what is built), [`docs/adr/`](docs/adr/)
+(decisions), [`docs/TRACE.md`](docs/TRACE.md) (trace format), [`AGENTS.md`](AGENTS.md) (how agents work here).
 
 ## Contributing
 
-This is a personal ARC Prize 2026 entry, developed on a tight competition
-schedule. Issues and forks are welcome; PRs are unlikely to be reviewed before
-the submission deadlines in `docs/PLAN.md`.
+A personal competition entry. Work happens on `feat/` branches and lands through pull requests; see
+[`AGENTS.md`](AGENTS.md). Issues are welcome.
 
 ## License
 
-Apache License 2.0 — see [`LICENSE`](LICENSE). This project reimplements the
-publicly documented behavior of the Duck harness as a pinned behavioral control;
-see [`docs/adr/0011-duck-as-pinned-control-not-application-framework.md`](docs/adr/0011-duck-as-pinned-control-not-application-framework.md)
-and [`docs/baselines/duck-control-v1.md`](docs/baselines/duck-control-v1.md) for
-the clean-room boundary — no Duck source, prompts, or notebook cells are vendored
-here.
+Apache License 2.0, see [`LICENSE`](LICENSE). The Duck harness behaviour is reimplemented, not vendored; see
+[`docs/adr/0011-duck-as-pinned-control-not-application-framework.md`](docs/adr/0011-duck-as-pinned-control-not-application-framework.md).

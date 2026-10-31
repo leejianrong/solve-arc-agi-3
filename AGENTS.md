@@ -19,12 +19,16 @@ Sibling repos: `../play-arc-agi-3` (human play app, local games in `environment_
    paid key or RunPod. Never touch a pod, key or limit you did not create. RunPod jobs follow the
    `runpod-jobs` skill; the dead-man's-switch is armed first. Launch with `scripts/runpod_launch_lab.sh up`, then
    always `watch --max-usd N` (pod-side `lab_obs.sh` + driver `runpod_watch.py`: phase deadlines, fatal lines, evidence shipped before delete).
+   RunPod pods on driver 570 cannot run our pinned vLLM wheels (PTX error); prefer Kaggle dev kernels.
 3. **Count from recordings or the trace, not log lines.** Kaggle logs print every agent line twice.
 4. **Submissions.** One per day, deadline 2026-11-02 23:59. Never submit without the user's go-ahead. Facts,
    pins and the dry-run history: `docs/baselines/kaggle-submission-checklist.md`.
-5. **The score rewards few actions, not speed.** Level score = 100 x (baseline/actions)^2, level i is weighted
+5. **A Kaggle dry run does not test the submission path.** Dry runs use `dry_runner.py` and offline games; a
+   rerun uses the official starter and the gateway, and both our submissions scored 0.00 with no logs to read.
+   Kaggle also mounts inputs in two layouts (nested under `competitions/`, or flat): never hard-code a mount path.
+6. **The score rewards few actions, not speed.** Level score = 100 x (baseline/actions)^2, level i is weighted
    i. Wasted moves on level 1 cost points; later levels matter most.
-6. Never commit `.env`, keys or recordings. The Kaggle source dataset holds code only.
+7. Never commit `.env`, keys or recordings. The Kaggle source dataset holds code only.
 
 ## Commands
 
@@ -32,12 +36,14 @@ Sibling repos: `../play-arc-agi-3` (human play app, local games in `environment_
 make check                 # lint + mypy + tests; run before calling anything done
 PYTHONPATH=src ../play-arc-agi-3/.venv/bin/python scripts/local_play.py --fake --games 24 --steps 150
                            # free scripted client through the real agent and scorer (crashes, format bugs)
-scripts/build_kaggle_bundle.sh "msg"   # publish code to the private dataset, waits until it is live
+scripts/build_kaggle_bundle.sh "msg"   # publish code to the private dataset (BUNDLE_REF=<commit> ships an older one)
+scripts/kaggle_dev.sh <name> KEY=VAL   # dev run on its own dataset, so a submission's code stays put
 kaggle kernels push -p kaggle/<dir>    # dev kernels: kaggle/dev-think; submission: kaggle/submission
 ```
 
 Model behaviour tests use **semula + Haiku subagents** only: `docs/SEMULA-HAIKU-LOOP.md`. Real-Qwen
-checks run as Kaggle dev kernels (free). Never call a hosted model API.
+checks run as Kaggle dev kernels (free). Never call a hosted model API. Every Haiku study ends with matplotlib
+charts and a written report, not only a table. One run clears 0 to 3 levels, so repeat before comparing variants.
 
 ## Layout
 
@@ -51,7 +57,8 @@ viewer (`make e2e-viewer` tests it in a real browser). Switches: `ARC3_TRACE_DIR
 
 ## Git
 
-Work on a `feat/` branch. Commit with the noreply identity through `-c user.name=... -c user.email=85485699+leejianrong@users.noreply.github.com`
+Work on a `feat/` branch off fresh `main`, one slice per branch, and land it through a PR (no direct pushes to
+`main`; CI runs `make check`). Put the net line change in the PR description. Commit with the noreply identity through `-c user.name=... -c user.email=85485699+leejianrong@users.noreply.github.com`
 (do not change git config). Push and open PRs only when asked.
 
 ## Subagents

@@ -7,9 +7,9 @@ import pytest
 
 from solve_arc_agi_3.observation import Grid, Region, segment
 from solve_arc_agi_3.reachability import (
-    _parts,
     footprint,
     learn_motion,
+    mover_parts,
     objects_reachable,
     reachable_cells,
     summary,
@@ -159,8 +159,8 @@ def test_ls20_trace_replay() -> None:
     assert m.steps["ACTION3"] == (-5, 0) and m.steps["ACTION4"] == (5, 0)
     assert 4 in m.blocked_colours
     grid = hist[0][0]
-    rect = footprint(_parts(grid, m.mover))
+    rect = footprint(mover_parts(grid, m.mover))
     assert rect is not None and rect[2] - rect[0] == 4 and rect[3] - rect[1] == 4
-    parts = _parts(grid, m.mover)
+    parts = mover_parts(grid, m.mover)
     cells = reachable_cells(grid, parts, m.steps, blocked_colours=m.blocked_colours)
     assert len(cells) > 1

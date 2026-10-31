@@ -46,9 +46,6 @@ def mover_parts(grid: Grid, mover: Collection[tuple[int, int]]) -> list[Region]:
     return out
 
 
-_parts = mover_parts  # old private name
-
-
 def footprint(parts: Iterable[Region]) -> Rect | None:
     ps = list(parts)
     if not ps:
