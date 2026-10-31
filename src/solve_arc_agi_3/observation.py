@@ -7,6 +7,7 @@ click targets are explicit), and a description of what the last action changed. 
 from __future__ import annotations
 
 from collections import Counter, deque
+from collections.abc import Callable
 from dataclasses import dataclass
 
 Grid = tuple[tuple[int, ...], ...]
@@ -62,7 +63,12 @@ def _components(
                 cx, cy = queue.popleft()
                 cells.append((cx, cy))
                 for nx, ny in ((cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)):
-                    if 0 <= nx < width and 0 <= ny < height and not seen[ny][nx] and include(nx, ny):
+                    if (
+                        0 <= nx < width
+                        and 0 <= ny < height
+                        and not seen[ny][nx]
+                        and include(nx, ny)
+                    ):
                         if by_color and grid[ny][nx] != color:
                             continue
                         seen[ny][nx] = True
@@ -90,7 +96,11 @@ def describe_objects(grid: Grid, *, limit: int = MAX_OBJECTS) -> str:
         return "(no grid)"
     bg = background_color(grid)
     regions = segment(grid, background=bg)
-    shown = regions if len(regions) <= limit else sorted(regions, key=lambda r: -r.size)[:limit]
+    shown = (
+        regions
+        if len(regions) <= limit
+        else sorted(regions, key=lambda r: -r.size)[:limit]
+    )
     shown = sorted(shown, key=lambda r: (r.y0, r.x0))
     lines = [f"background color {bg}; {len(regions)} objects (x = column, y = row):"]
     lines += [f"- {r.describe()}" for r in shown]
@@ -104,7 +114,11 @@ def changed_count(before: Grid, after: Grid) -> int:
 
     if len(before) != len(after) or (before and len(before[0]) != len(after[0])):
         return -1
-    return sum(a != b for rb, ra in zip(before, after, strict=True) for a, b in zip(rb, ra, strict=True))
+    return sum(
+        a != b
+        for rb, ra in zip(before, after, strict=True)
+        for a, b in zip(rb, ra, strict=True)
+    )
 
 
 def describe_change(before: Grid | None, after: Grid) -> str:
@@ -129,6 +143,12 @@ def describe_change(before: Grid | None, after: Grid) -> str:
         ys = [c[1] for c in cells]
         moves = Counter((before[y][x], after[y][x]) for x, y in cells)
         (old, new), _n = moves.most_common(1)[0]
-        parts.append(f"{len(cells)} cells at x{min(xs)}-{max(xs)} y{min(ys)}-{max(ys)} ({old}->{new})")
-    more = f"; {len(comps) - MAX_CHANGE_REGIONS} more regions" if len(comps) > MAX_CHANGE_REGIONS else ""
+        parts.append(
+            f"{len(cells)} cells at x{min(xs)}-{max(xs)} y{min(ys)}-{max(ys)} ({old}->{new})"
+        )
+    more = (
+        f"; {len(comps) - MAX_CHANGE_REGIONS} more regions"
+        if len(comps) > MAX_CHANGE_REGIONS
+        else ""
+    )
     return f"{count} cells changed: " + "; ".join(parts) + more

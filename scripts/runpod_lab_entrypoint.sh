@@ -39,6 +39,9 @@ main_job() {
   export PATH="/root/.local/bin:/usr/local/cuda/bin:$PATH"
   command -v uv >/dev/null 2>&1 || timeout 300 sh -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
   timeout 300 uv tool install kaggle --quiet
+  # Parallel kaggle invocations race to create ~/.config/kaggle (FileExistsError killed one download): create it
+  # and make the first call serially.
+  mkdir -p /root/.config/kaggle && kaggle --version >/dev/null 2>&1
   export UV_LINK_MODE=copy
   mkdir -p /kaggle/input/datasets/driessmit1 /kaggle/input/datasets/mirzamilanfarabi /kaggle/input/competitions/arc-prize-2026-arc-agi-3
   echo "PHASE=download_start $(date -u +%FT%TZ)"

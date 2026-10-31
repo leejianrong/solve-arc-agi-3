@@ -183,8 +183,8 @@ class OpenAICompatibleClient:
                 for tool in request.tools
             ]
             body["tool_choice"] = "auto"
-        if self.config.provider.value == "openrouter" and sampling.thinking:
-            body["reasoning"] = {"enabled": True}
+        if self.config.provider.value == "openrouter":
+            body["reasoning"] = {"enabled": bool(sampling.thinking)}
         if self.config.provider.value == "local_vllm" and not sampling.thinking:
             # The server default is thinking on; this turns it off for this request only.
             body["chat_template_kwargs"] = {"enable_thinking": False}

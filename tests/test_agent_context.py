@@ -67,5 +67,10 @@ def test_history_describes_effects_and_old_frames_are_not_resent() -> None:
     core.choose(_observation(3))
     core.choose(_observation(5, levels=1))
     text = _user_text(client.requests[-1])
-    assert "1. ACTION1 -> NOT_FINISHED, 32 cells changed, levels +1" in text
-    assert text.count('"grid"') == 1  # only the current frame is sent in full
+    assert (
+        "1. ACTION1 -> NOT_FINISHED, 32 cells changed" in text
+        and "LEVEL CLEARED (+1)" in text
+    )
+    assert (
+        text.count("Grid (rows top to bottom") == 1
+    )  # only the current frame is sent in full

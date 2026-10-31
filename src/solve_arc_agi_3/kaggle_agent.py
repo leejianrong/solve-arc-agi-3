@@ -124,10 +124,12 @@ def make_agent_class(
                     return self._adapter.choose_action(frames, latest_frame)
             except Exception:  # model/parse failure must not end the game
                 self._fallbacks += 1
-                logger.exception(
-                    "model step failed for %s (fallback #%d)",
+                logger.error(
+                    "model step failed for %s (fallback #%d): %s",
                     self.game_id,
                     self._fallbacks,
+                    describe_reply(self._adapter.last_response),
+                    exc_info=self._fallbacks <= 2,
                 )
                 decision = fallback_decision(
                     tuple(latest_frame.available_actions), self._fallbacks
@@ -136,6 +138,18 @@ def make_agent_class(
 
     SubmissionAgent.__name__ = "MyAgent"
     return SubmissionAgent
+
+
+def describe_reply(response: InferenceResponse | None) -> str:
+    """One line saying what the model sent back (for the log when no move could be read from it)."""
+
+    if response is None:
+        return "no reply (request failed or timed out)"
+    calls = [c.function.arguments[:200] for c in response.tool_calls]
+    return (
+        f"tool_calls={calls} content={response.content[:200]!r} "
+        f"reasoning_tail={(response.reasoning or '')[-120:]!r}"
+    )
 
 
 class LoggingClient:
