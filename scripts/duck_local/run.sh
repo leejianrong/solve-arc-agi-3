@@ -26,9 +26,19 @@ if [ ! -f "$BUNDLE/.patched" ]; then
   rm -rf "$BUNDLE" && cp -a "$BUNDLE_SRC" "$BUNDLE"
   python3 -I "$HERE/duck_local.py" extract-patch "$NOTEBOOK" "$WORK/harness-changes.patch"
   # His notebook applies exactly this; git apply fails loudly (set -e) if it does not apply.
-  (cd "$BUNDLE/src" && git apply --include='ARC3-Inference/*' -v "$WORK/harness-changes.patch")
+  # GIT_CEILING_DIRECTORIES: inside this repo (WORK defaults to build/) git apply would skip every path.
+  (cd "$BUNDLE/src" && GIT_CEILING_DIRECTORIES="$WORK" git apply --include='ARC3-Inference/*' -v "$WORK/harness-changes.patch")
   grep -q reset_exposed "$BUNDLE/src/ARC3-Inference/inference/agent/action_names.py"  # patch really landed
   touch "$BUNDLE/.patched"
+fi
+
+# Our STATUS block (ARC3_STATUS_HEADER=1, default off): module copied in, hook added once to the user prompt.
+TA="$BUNDLE/src/ARC3-Inference/inference/agent/tool_agent.py"
+cp "$HERE/status_header.py" "$BUNDLE/src/ARC3-Inference/inference/agent/status_header.py"
+if [ ! -f "$BUNDLE/.status_hook" ]; then
+  python3 -I "$HERE/duck_local.py" apply-status-hook "$TA"   # fails loudly unless the anchor matches once
+  [ "$(grep -c 'duck_local status hook' "$TA")" = 1 ]
+  touch "$BUNDLE/.status_hook"
 fi
 
 if [ ! -x "$VENV/bin/python" ]; then

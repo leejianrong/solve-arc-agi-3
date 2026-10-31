@@ -77,6 +77,25 @@ def extract_patch(notebook: Path) -> str:
     raise ValueError(f"no %%writefile .patch cell in {notebook}")
 
 
+HOOK_ANCHOR = "        lines.extend(self._prepare_auto_diff(current_frame, previous_step_summary))\n"
+HOOK = (
+    '        if os.environ.get("ARC3_STATUS_HEADER") == "1":  # duck_local status hook\n'
+    "            from inference.agent.status_header import status_lines\n"
+    "            lines.extend(status_lines(self, history_entries, current_frame, _normalize_valid_actions(valid_actions)))\n"
+)
+
+
+def apply_status_hook(source: str) -> str:
+    """Insert the ARC3_STATUS_HEADER hook after the auto-frame-diff line of `_build_user_prompt`."""
+    if source.count(HOOK_ANCHOR) != 1:
+        raise ValueError(
+            f"status hook anchor found {source.count(HOOK_ANCHOR)} times, expected 1"
+        )
+    out = source.replace(HOOK_ANCHOR, HOOK_ANCHOR + HOOK)
+    assert out.count(HOOK) == 1
+    return out
+
+
 def play(args: argparse.Namespace) -> None:
     import arc_agi
     import taaf.game_api
@@ -139,6 +158,8 @@ def main() -> None:
     ex = sub.add_parser("extract-patch")
     ex.add_argument("notebook")
     ex.add_argument("out")
+    hk = sub.add_parser("apply-status-hook")
+    hk.add_argument("tool_agent")
     p = sub.add_parser("play")
     p.add_argument(
         "--bundle",
@@ -157,6 +178,11 @@ def main() -> None:
     a = ap.parse_args()
     if a.cmd == "extract-patch":
         Path(a.out).write_text(extract_patch(Path(a.notebook)), encoding="utf-8")
+    elif a.cmd == "apply-status-hook":
+        path = Path(a.tool_agent)
+        path.write_text(
+            apply_status_hook(path.read_text(encoding="utf-8")), encoding="utf-8"
+        )
     else:
         play(a)
 
