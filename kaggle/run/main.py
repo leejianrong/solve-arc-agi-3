@@ -36,7 +36,27 @@ GRACE_S = (
 BUNDLE = find_dataset(os.getenv("ARC3_BUNDLE_SLUG", "solve-arc-agi-3-src"))
 MODEL = find_dataset("vrfai-qwen3-6-27b-fp8-hf-snapshot")
 WHEELS = find_dataset("arc3-vllm-h100-wheelhouse-v3")
-COMP = Path("/kaggle/input/competitions/arc-prize-2026-arc-agi-3")
+
+
+def _find_competition() -> Path:
+    """Kaggle mounts inputs in two layouts (nested under competitions/, or flat); a dev run failed on the flat one."""
+
+    slug = "arc-prize-2026-arc-agi-3"
+    for candidate in (
+        Path("/kaggle/input/competitions") / slug,
+        Path("/kaggle/input") / slug,
+    ):
+        if (candidate / "ARC-AGI-3-Agents").exists() or (
+            candidate / "environment_files"
+        ).exists():
+            return candidate
+    log(
+        f"competition mount not found; /kaggle/input holds {sorted(os.listdir('/kaggle/input'))}"
+    )
+    return Path("/kaggle/input/competitions") / slug
+
+
+COMP = _find_competition()
 WORK = Path("/kaggle/working")
 AGENTS = WORK / "ARC-AGI-3-Agents"
 READY = Path("/tmp/arc3-model-ready")
