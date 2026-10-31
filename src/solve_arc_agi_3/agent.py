@@ -41,8 +41,14 @@ from .observation import (
     object_motion,
     region_key,
     segment,
+    untried_clicks,
 )
 from .step_trace import encode_rows, grid_rows
+
+# Loop-breaker: a move is "dead" after this many no-ops on the identical board, or (clicks only) this many
+# tries anywhere without ever changing anything. The agent then swaps it for something untried.
+DEAD_ON_SAME_BOARD = 2
+DEAD_CLICK_TRIES = 3
 
 _ACTION_PATTERN = re.compile(r"\b(RESET|ACTION[1-7])\b", re.IGNORECASE)
 _COORDINATE_SUFFIX = re.compile(r"^[\s:(]*([0-9]{1,2})[\s,]+([0-9]{1,2})")
@@ -512,6 +518,13 @@ class BaselineAgentCore:
             str, list[int]
         ] = {}  # action key -> [tries, tries that changed the grid]
         self._noop_streak = 0
+        self._moves: dict[
+            str, list[int]
+        ] = {}  # exact move label -> [tries, tries that changed the grid]
+        self._dead: Counter[tuple[str, int]] = (
+            Counter()
+        )  # (move label, board hash) -> no-ops
+        self._clicks: list[tuple[int, int]] = []
         self._last_change = "no action taken yet"
         self._steps = 0
         self.last_response: InferenceResponse | None = None
@@ -610,6 +623,11 @@ class BaselineAgentCore:
             self._move_status = f"{label} was BLOCKED ({why}); the object did not move"
         else:
             self._move_status = f"{label} changed the grid but no object moved"
+        exact = self._moves.setdefault(label, [0, 0])
+        exact[0] += 1
+        exact[1] += 1 if changed else 0
+        if not changed:
+            self._dead[(label, hash(before))] += 1
         tries = self._effects.setdefault(key, [0, 0])
         tries[0] += 1
         tries[1] += 1 if changed else 0
@@ -1029,6 +1047,38 @@ class BaselineAgentCore:
         )
         return f"Results of your last plan, move by move:\n{lines}\n"
 
+    @staticmethod
+    def _label(decision: ActionDecision) -> str:
+        coords = (
+            f" at x={decision.data['x']},y={decision.data['y']}"
+            if decision.data
+            else ""
+        )
+        return f"{decision.name}{coords}"
+
+    def _is_dead(
+        self, decision: ActionDecision, grid: tuple[tuple[int, ...], ...]
+    ) -> bool:
+        """True when this exact move is known to do nothing here (see DEAD_ON_SAME_BOARD)."""
+
+        label = self._label(decision)
+        if self._dead[(label, hash(grid))] >= DEAD_ON_SAME_BOARD:
+            return True
+        tries, changed = self._moves.get(label, (0, 0))
+        return bool(decision.data) and tries >= DEAD_CLICK_TRIES and changed == 0
+
+    def _dead_moves(self, observation: Observation) -> list[str]:
+        h = hash(observation.grid)
+        labels = {
+            k for (k, g), n in self._dead.items() if g == h and n >= DEAD_ON_SAME_BOARD
+        }
+        labels |= {
+            k
+            for k, (tries, changed) in self._moves.items()
+            if " at x=" in k and tries >= DEAD_CLICK_TRIES and changed == 0
+        }
+        return sorted(labels)[:8]
+
     def _untried_line(self, observation: Observation) -> str:
         if not self._effects:
             return ""
@@ -1037,7 +1087,37 @@ class BaselineAgentCore:
             for a in observation.available_actions
             if a != 0 and f"ACTION{a}" not in self._effects
         ]
-        return f"Not tried yet in this game: {', '.join(untried)}.\n" if untried else ""
+        text = f"Not tried yet in this game: {', '.join(untried)}.\n" if untried else ""
+        if 6 in observation.available_actions and self._clicks:
+            fresh = untried_clicks(observation.grid, self._clicks, limit=8)
+            if fresh:
+                listed = "; ".join(f"colour {r.color} at {r.center}" for r in fresh)
+                text += f"Objects not clicked yet (x,y centres): {listed}.\n"
+        dead = self._dead_moves(observation)
+        if dead:
+            text += f"These moves did nothing here, do not repeat them: {'; '.join(dead)}.\n"
+        return text
+
+    def _alternative(
+        self, observation: Observation, avoid: ActionDecision
+    ) -> ActionDecision | None:
+        """A move to play instead of a dead one: an untried object to click, else an untried or live action."""
+
+        available = observation.available_actions
+        if avoid.data and 6 in available:
+            for r in untried_clicks(observation.grid, self._clicks, limit=8):
+                x, y = r.center
+                cand = ActionDecision(
+                    name="ACTION6", data={"x": x, "y": y}, source="loop-breaker"
+                )
+                if not self._is_dead(cand, observation.grid):
+                    return cand
+        plain = [a for a in available if a not in (0, 6)]
+        for a in sorted(plain, key=lambda a: f"ACTION{a}" in self._effects):
+            cand = ActionDecision(name=f"ACTION{a}", source="loop-breaker")
+            if not self._is_dead(cand, observation.grid):
+                return cand
+        return None
 
     def _counter_line(self) -> str:
         regions = self._counter_regions()
@@ -1098,7 +1178,9 @@ class BaselineAgentCore:
             self._queue.clear()
             return None
         decision = self._queue.pop(0)
-        if decision.action_id not in observation.available_actions:
+        if decision.action_id not in observation.available_actions or self._is_dead(
+            decision, observation.grid
+        ):
             self._queue.clear()
             return None
         self._previous = observation
@@ -1116,12 +1198,9 @@ class BaselineAgentCore:
     def _note_pending(self, decision: ActionDecision) -> None:
         self._steps += 1
         self._pending_move = self._move(decision)
-        coords = (
-            f" at x={decision.data['x']},y={decision.data['y']}"
-            if decision.data
-            else ""
-        )
-        self._pending = (f"{decision.name}{coords}", decision.name)
+        if decision.data:
+            self._clicks.append((decision.data["x"], decision.data["y"]))
+        self._pending = (self._label(decision), decision.name)
 
     def request_completion(
         self, observation: Observation
@@ -1183,6 +1262,12 @@ class BaselineAgentCore:
         decisions = parse_action_decisions(
             response, available_actions=observation.available_actions
         )
+        override: str | None = None
+        if self._is_dead(decisions[0], observation.grid):
+            swap = self._alternative(observation, decisions[0])
+            if swap is not None:
+                override = f"{self._label(decisions[0])} -> {self._label(swap)}"
+                decisions = [swap]
         self._queue = decisions[1:]
         self._plan_levels = observation.levels_completed
         self._note_pending(decisions[0])
@@ -1194,6 +1279,8 @@ class BaselineAgentCore:
             "plan_idx": 0,
             "nudge": self._call_nudged,
         }
+        if override:
+            self.last_turn["override"] = override
         if self._events and self.last_event:
             self.last_turn["event"] = self.last_event
         self._surprise = ""

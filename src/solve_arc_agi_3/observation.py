@@ -249,3 +249,22 @@ def describe_motion(pairs: list[tuple[Region, Region]]) -> str:
         f"color {a.color} size {a.size} moved ({b.x0 - a.x0:+d},{b.y0 - a.y0:+d}) from {a.center} to {b.center}"
         for a, b in pairs
     )
+
+
+def untried_clicks(
+    grid: Grid, clicked: list[tuple[int, int]], *, limit: int = 8
+) -> list[Region]:
+    """Objects with no click inside their box yet, colours never clicked first (then reading order)."""
+
+    if not grid:
+        return []
+    hit_colors = {
+        grid[y][x] for x, y in clicked if 0 <= y < len(grid) and 0 <= x < len(grid[0])
+    }
+    fresh = [
+        r
+        for r in segment(grid)
+        if not any(r.x0 <= x <= r.x1 and r.y0 <= y <= r.y1 for x, y in clicked)
+    ]
+    fresh.sort(key=lambda r: (r.color in hit_colors, r.y0, r.x0))
+    return fresh[:limit]
