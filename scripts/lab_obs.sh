@@ -42,7 +42,9 @@ obs_heartbeat() {
     [ -f "$OBS_DIR/phase" ] && read -r name _ <"$OBS_DIR/phase"
     disk="$(df -Pk "$OBS_DIR" 2>/dev/null | awk 'NR==2{printf "%.0f", $4/1048576}')"
     gpu="$(timeout 5 nvidia-smi --query-gpu=memory.used,utilization.gpu --format=csv,noheader 2>/dev/null | head -1 | tr -d ' ')"
-    echo "HEARTBEAT t=$(obs_now) up=$(($(obs_now) - OBS_T0))s phase=$name disk_free_gb=${disk:-?} gpu=${gpu:--}"
+    prog=""
+    [ -n "${OBS_PROGRESS_CMD:-}" ] && prog="$(timeout 20 bash -c "$OBS_PROGRESS_CMD" 2>/dev/null | tr '\n' ' ' | cut -c1-300)"
+    echo "HEARTBEAT t=$(obs_now) up=$(($(obs_now) - OBS_T0))s phase=$name disk_free_gb=${disk:-?} gpu=${gpu:--} ${prog}"
   done
 }
 

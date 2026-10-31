@@ -503,6 +503,16 @@ class BaselineAgentCore:
         self._wm_message = ""
         self._wm_seq = 0  # which submission the message is about
         self._wm_shown_seq = -1  # the one the latest prompt carried
+        self._executor: Any = None  # PlanExecutor of the planner's current plan (V3)
+        self._exec_levels = 0
+        self._pending_planned = False  # the pending move came from the planner
+        self._plan_key: tuple[int, int] | None = (
+            None  # (revision, levels) already planned
+        )
+        self._goal_predicate: Callable[[tuple[tuple[int, ...], ...]], bool] | None = (
+            None
+        )
+        self.last_mismatch: dict[str, Any] = {}
         self._use_ledger = use_ledger
         self._ledger_chars = ledger_chars
         self._ledger_records: list[dict[str, Any]] = []
@@ -572,8 +582,16 @@ class BaselineAgentCore:
         """Record a move the model did not choose (a reset or a fallback) so history and the trace include it."""
 
         self._queue.clear()
+        self._executor = None
         self._previous = observation
         self._note_pending(decision)
+
+    def set_goal_predicate(
+        self, goal: Callable[[tuple[tuple[int, ...], ...]], bool] | None
+    ) -> None:
+        """A target test on frames (host side) for planning when the model's source has no `is_goal`."""
+
+        self._goal_predicate = goal
 
     def request_nudge(self) -> None:
         """Ask for the move properly on the next call (the last reply had no usable action)."""
@@ -672,6 +690,8 @@ class BaselineAgentCore:
         }
         if self._world_model:
             self._record_world_model(observation)
+        if self._executor is not None and self._pending_planned:
+            self._check_plan(observation, gained)
         if self._events and self._queue and gained <= 0:
             self._check_surprise(key)
         if self._use_ledger or self._events:
@@ -1030,6 +1050,133 @@ class BaselineAgentCore:
             result.close()
         self._wm_message = result.message()[:MAX_WORLD_MODEL_MESSAGE]
 
+    def _check_plan(self, observation: Observation, gained: int) -> None:
+        """Compare the real frame with the one the planner predicted for the move just settled."""
+
+        ex = self._executor
+        if gained > 0:  # the level changed: the frame legitimately differs
+            self._executor = None
+            return
+        status = ex.observe(observation.grid)
+        if status.state == "continue":
+            return
+        self._executor = None
+        revision = self._wm_result.spec.revision if self._wm_result else 0
+        claim = f"World model r{revision} predicts this game"
+        step = max(self._steps - 1, 0)
+        if status.state == "done":
+            hid = self._model_ledger.propose(claim, "mechanic", step)
+            self._model_ledger.observe(hid, step, "support", "a whole plan matched")
+            return
+        report = status.report
+        assert report is not None and self._previous is not None
+        before = self._previous.grid
+        predicted = describe_change(before, ex.frames[report.step])
+        actual = describe_change(before, observation.grid)
+        text = (
+            f"PLAN ABORTED: your world model r{revision} predicted {predicted[:150]} but "
+            f"{actual[:150]} happened at step {step} ({self._label_of(self._pending_move)}; plan "
+            f"step {report.step}). {report.text()}. Fix the model so it still replays every move, "
+            "including this one, and resubmit it."
+        )
+        self.last_mismatch = {
+            "step": step,
+            "plan_step": report.step,
+            "revision": revision,
+            "cells": report.cells_differing,
+            "bbox": list(report.bbox) if report.bbox else None,
+        }
+        hid = self._model_ledger.propose(claim, "mechanic", step)
+        self._model_ledger.observe(hid, step, "counter", text[:200])
+        self._wm_message = f"{self._wm_message} {text}".strip()
+
+    @staticmethod
+    def _label_of(move: dict[str, object]) -> str:
+        coords = f" at x={move['x']},y={move['y']}" if "x" in move else ""
+        return f"{move['name']}{coords}"
+
+    def _make_plan(self, observation: Observation) -> Any:
+        """Search the accepted model from the current frame; None when it has no usable goal test."""
+
+        from .planner import plan
+        from .world_model import Move, transitions_from_trace
+
+        model = self._wm_result.model
+        goal = self._goal_predicate
+        if goal is None and not getattr(model, "has_is_goal", False):
+            return None
+        moves = [
+            Move(f"ACTION{a}") for a in observation.available_actions if a not in (0, 6)
+        ]
+        history = [
+            (t.before, t.move)
+            for t in transitions_from_trace(self._wm_records)
+            if t.levels_before == observation.levels_completed
+        ]
+        return plan(model, observation.grid, moves, goal, history=history)
+
+    def _planned_decision(self, observation: Observation) -> ActionDecision | None:
+        """Next move of the planner's plan, planning first when a new verified model is available."""
+
+        self._settle_pending(observation)
+        safe = (
+            observation.state == "NOT_FINISHED"
+            and observation.levels_completed == self._exec_levels
+        )
+        ex = self._executor
+        if ex is not None and (not safe or ex.finished):
+            ex = self._executor = None
+        if ex is None:
+            if self._wm_result is None or observation.state != "NOT_FINISHED":
+                return None
+            key = (self._wm_result.spec.revision, observation.levels_completed)
+            if (
+                key == self._plan_key
+            ):  # planned already (or aborted): wait for a revision
+                return None
+            self._plan_key = key
+            try:
+                result = self._make_plan(observation)
+            except Exception:  # noqa: BLE001 - a broken planner must not cost the move
+                return None
+            if result is None:
+                return None
+            if not result.found or not result.moves:
+                self._wm_message = (
+                    f"{self._wm_message} Planner found no plan with your model "
+                    f"({result.reason}).".strip()
+                )
+                return None
+            from .planner import PlanExecutor
+
+            ex = self._executor = PlanExecutor(result)
+            self._exec_levels = observation.levels_completed
+            self._plan_full = [self._decision_of(m) for m in result.moves]
+            self._plan_pos = 0
+        move = ex.next_move()
+        assert move is not None
+        decision = self._decision_of(move)
+        if decision.action_id not in observation.available_actions:
+            self._executor = None
+            return None
+        self._previous = observation
+        self._note_pending(decision)
+        self._pending_planned = True
+        self._plan_pos += 1
+        self.last_turn = {
+            "src": "planned",
+            "move": self._move(decision),
+            "plan": [self._move(d) for d in self._plan_full],
+            "plan_idx": self._plan_pos,
+            "nudge": False,
+        }
+        return decision
+
+    @staticmethod
+    def _decision_of(move: Any) -> ActionDecision:
+        data = {"x": move.x, "y": move.y} if move.x is not None else {}
+        return ActionDecision(name=move.name, data=data, source="planned")
+
     def close(self) -> None:
         """Release the sandboxed world model (game end); safe to call more than once."""
 
@@ -1166,6 +1313,10 @@ class BaselineAgentCore:
     def queued_decision(self, observation: Observation) -> ActionDecision | None:
         """The next move of the current plan, or None when the plan is spent or no longer safe."""
 
+        if self._world_model and not self._queue:
+            planned = self._planned_decision(observation)
+            if planned is not None:
+                return planned
         if not self._queue:
             return None
         unsafe = (
@@ -1196,6 +1347,7 @@ class BaselineAgentCore:
         return decision
 
     def _note_pending(self, decision: ActionDecision) -> None:
+        self._pending_planned = False
         self._steps += 1
         self._pending_move = self._move(decision)
         if decision.data:
@@ -1215,6 +1367,7 @@ class BaselineAgentCore:
 
         self._settle_pending(observation)
         self._queue.clear()
+        self._executor = None
         self._last_available = observation.available_actions
         self._game_id = observation.game_id
         if self._events:

@@ -85,6 +85,8 @@ main_job() {
 }
 
 export OBS_RESULTS_DIR="${OBS_RESULTS_DIR:-/workspace/out}"
+# What is moving during the long phases: bytes on disk per input, and which downloads are still running.
+export OBS_PROGRESS_CMD='for d in /kaggle/input/datasets/*/* /kaggle/input/competitions/* /tmp/comp; do [ -e "$d" ] && printf "%s=%sM " "$(basename "$d" | cut -c1-14)" "$(du -sm "$d" 2>/dev/null | cut -f1)"; done; printf "dl_procs=%s zips=%s" "$(pgrep -fc "kaggle (datasets|competitions) download")" "$(find /kaggle/input /tmp/comp -name "*.zip" 2>/dev/null | wc -l)"'
 obs_start
 (main_job 2>&1 | tee -a "$LOG") &
 job_pid=$!

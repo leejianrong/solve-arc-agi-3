@@ -38,7 +38,7 @@ Every line has `v` (always 1) and `kind`.
 |---|---|
 | `t`, `game` | as above |
 | `step` | 0-based index of the move in this game |
-| `src` | `model` (move from a model call), `queued` (rest of an earlier plan), `fallback` (scripted), `forced_reset` |
+| `src` | `model` (move from a model call), `queued` (rest of an earlier plan), `planned` (move from the planner over a verified world model, `ARC3_WORLD_MODEL=1`; carries `plan` and `plan_idx` like `queued`; additive, schema version stays 1), `fallback` (scripted), `forced_reset` |
 | `moves` | the move played as a one-item list: `[{"name": "ACTION6", "x": 12, "y": 30}]` (`x`, `y` only for clicks) |
 | `state`, `levels`, `win_levels`, `avail` | as reported after the move |
 | `call` | only when `src` is `model`: `{"ms": 11500, "prompt_tokens": 5100, "completion_tokens": 124, "ok": true}` |
