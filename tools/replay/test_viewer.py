@@ -19,6 +19,7 @@ from playwright.sync_api import sync_playwright
 ROOT = Path(__file__).resolve().parent.parent.parent
 PAGE = (ROOT / "tools/replay/index.html").as_uri()
 FIXTURE = ROOT / "tests/fixtures/trace_sample"
+FIXTURE_B = ROOT / "tests/fixtures/trace_sample_b"
 SHOTS = Path(os.environ.get("VIEWER_SHOTS", "viewer-shots"))
 RESULTS: list[bool] = []
 
@@ -203,6 +204,215 @@ def main() -> int:
             px(3, 62) == [255, 133, 27],
             str(px(3, 62)),
         )
+
+        print("compare")
+        page.set_viewport_size({"width": 1440, "height": 1400})
+        page.click('.tab[data-view="compare"]')
+        check(
+            "one run: explanation shown",
+            "Only one run is loaded" in page.inner_text("#c-msg"),
+        )
+        check(
+            "one run: no canvases rendered",
+            page.locator("#cv" + "A").count() == 0
+            and not page.locator("#c-side").is_visible(),
+        )
+        check(
+            "one run: table has one row",
+            page.locator("#cmp-table tbody tr").count() == 1,
+        )
+        page.screenshot(path=str(SHOTS / "compare-one-run.png"), full_page=True)
+        page.set_input_files("#folder-b", str(FIXTURE_B))
+        page.wait_for_selector("#cvA", state="visible")
+        check(
+            "add-a-run names both runs",
+            "trace_sample_b" in page.inner_text("#runnames")
+            and "trace_sample" in page.inner_text("#runnames"),
+            page.inner_text("#runnames"),
+        )
+        check("two table rows", page.locator("#cmp-table tbody tr").count() == 2)
+        # A: 12 actions, 1 level, 1 fallback (8.3%), 4 calls... B: 6 actions, 1 level, 0 fallbacks
+        best = page.evaluate(
+            "() => [...document.querySelectorAll('#cmp-table td.best')].map(td => td.closest('tr').dataset.run + ':' + td.dataset.col)"
+        )
+        check(
+            "best cells: B has fewer actions, no fallbacks, fewer tokens and seconds; levels tie",
+            sorted(best) == ["B:actions", "B:fb", "B:sec", "B:tok"],
+            str(best),
+        )
+        bb = page.locator("#cmp-table td.best").first.bounding_box()
+        check(
+            "best cell visible with size",
+            bb and bb["width"] > 30 and bb["height"] > 15,
+            str(bb),
+        )
+        check(
+            "settings read from run.json",
+            "timeout_s 180" in page.locator('#cmp-table tr[data-run="B"]').inner_text(),
+        )
+
+        def cpx(side: str, x: int, y: int) -> list[int]:
+            return page.evaluate(
+                "([s,x,y]) => Array.from(document.getElementById('cv'+s).getContext('2d').getImageData(x,y,1,1).data).slice(0,3)",
+                [side, x, y],
+            )
+
+        def cdata(side: str) -> str:
+            return page.evaluate(f"document.getElementById('cv{side}').toDataURL()")
+
+        for side in "AB":
+            cb = page.locator("#cv" + side).bounding_box()
+            check(
+                f"compare canvas {side} non-zero and square",
+                cb and cb["width"] > 200 and abs(cb["width"] - cb["height"]) < 1.5,
+                str(cb),
+            )
+        ba, bb2 = (
+            page.locator("#cvA").bounding_box(),
+            page.locator("#cvB").bounding_box(),
+        )
+        check(
+            "boards sit side by side",
+            ba
+            and bb2
+            and bb2["x"] > ba["x"] + ba["width"] - 2
+            and abs(ba["y"] - bb2["y"]) < 2,
+            f"{ba} {bb2}",
+        )
+        check("step 0: identical pixels", cdata("A") == cdata("B"))
+        check(
+            "step 0: grey block on both",
+            cpx("A", 11, 11) == GREY and cpx("B", 11, 11) == GREY,
+        )
+        for _ in range(3):
+            page.click("#c-next")
+        check("same moves up to step 2: still identical", cdata("A") == cdata("B"))
+        check("divergence marker exists with size", page.locator("#cdiv").is_visible())
+        sb, mb = (
+            page.locator("#cstrip").bounding_box(),
+            page.locator("#cdiv").bounding_box(),
+        )
+        check(
+            "marker inside the strip",
+            sb
+            and mb
+            and mb["x"] >= sb["x"] - 4
+            and mb["x"] + mb["width"] <= sb["x"] + sb["width"] + 4
+            and mb["width"] >= 4,
+            f"{sb} {mb}",
+        )
+        page.click("#c-first")
+        page.click("#c-jump")
+        check(
+            "jump moves the shared scrubber to step 3",
+            page.inner_text("#c-pos") == "step 3",
+            page.inner_text("#c-pos"),
+        )
+        check(
+            "both boards show step 3",
+            all(
+                "step 3" in page.locator(f"#cc-{x} [data-role=stepname]").inner_text()
+                for x in "AB"
+            ),
+        )
+        check(
+            "step 3: A (21,21) still black",
+            cpx("A", 21, 21) == BLACK,
+            str(cpx("A", 21, 21)),
+        )
+        check(
+            "step 3: B (21,21) yellow",
+            cpx("B", 21, 21) == YELLOW,
+            str(cpx("B", 21, 21)),
+        )
+        check("step 3: pixels differ", cdata("A") != cdata("B"))
+        check(
+            "moves and sources shown per side",
+            "ACTION2" in page.locator("#cc-A [data-role=move]").inner_text()
+            and "ACTION3" in page.locator("#cc-B [data-role=move]").inner_text()
+            and "model call" in page.locator("#cc-B [data-role=src]").inner_text(),
+        )
+        check(
+            "B reply shown",
+            "Try ACTION3" in page.locator("#cc-B [data-role=reply]").inner_text(),
+        )
+        check(
+            "A change line says nothing changed",
+            "nothing changed" in page.locator("#cc-A [data-role=change]").inner_text(),
+            page.locator("#cc-A [data-role=change]").inner_text(),
+        )
+        check(
+            "B change line counts cells",
+            "16 cells" in page.locator("#cc-B [data-role=change]").inner_text(),
+        )
+        page.click("#cdiv")
+        check(
+            "clicking the marker also jumps",
+            page.inner_text("#c-pos") == "step 3",
+            page.inner_text("#c-pos"),
+        )
+        check(
+            "nobody has ended yet",
+            not any(
+                "ended" in page.locator(f"#cc-{x} [data-role=stepname]").inner_text()
+                for x in "AB"
+            ),
+        )
+        page.screenshot(path=str(SHOTS / "compare-diverged.png"), full_page=True)
+        page.evaluate(
+            "() => { const s = document.getElementById('c-scrub'); s.value = 9; s.dispatchEvent(new Event('input', {bubbles:true})); }"
+        )
+        held = cdata("B")
+        check(
+            "B shows ended past its last step",
+            page.locator("#cc-B [data-role=stepname]").inner_text() == "ended",
+        )
+        check(
+            "A still playing, not ended",
+            page.locator("#cc-A [data-role=stepname]").inner_text() == "step 8",
+        )
+        page.click("#c-next")
+        check("ended board holds its last frame", cdata("B") == held)
+        check(
+            "ended side shows no move chips",
+            page.locator("#cc-B [data-role=move]").count() == 0,
+            str(page.locator("#cc-B [data-role=move]").count()),
+        )
+        page.click("#c-last")
+        check("last frame is the longer run's", page.inner_text("#c-pos") == "step 11")
+        page.screenshot(path=str(SHOTS / "compare-ended.png"), full_page=True)
+        page.click("#c-play")
+        page.wait_for_function(
+            "document.getElementById('c-pos').textContent === 'start' || document.getElementById('c-pos').textContent !== 'step 11'"
+        )
+        page.click("#c-play")
+        check("compare play toggles", page.inner_text("#c-play") == "Play")
+        page.set_input_files("#folder-b", str(FIXTURE))
+        page.wait_for_function(
+            "document.getElementById('runnames').textContent.includes('B: trace_sample ')||document.getElementById('runnames').textContent.trim().endsWith('B: trace_sample')"
+        )
+        check(
+            "a third load replaces B",
+            page.locator("#cmp-table tbody tr").count() == 2
+            and "trace_sample_b" not in page.inner_text("#runnames"),
+            page.inner_text("#runnames"),
+        )
+        check(
+            "identical runs: no divergence marker",
+            page.locator("#cdiv").count() == 0
+            and "never play different" in page.inner_text("#c-divtext"),
+        )
+        page.set_input_files("#folder-b", str(FIXTURE_B))
+        page.wait_for_selector("#cdiv")
+        # a malformed second run keeps the loaded runs
+        page.evaluate(r"() => loadFilesB([new File(['nope\n{}\n'], 'bad.jsonl')])")
+        page.wait_for_selector("#error", state="visible")
+        check(
+            "malformed B shows an error and keeps B",
+            "bad.jsonl line 1" in page.inner_text("#error")
+            and page.locator("#cmp-table tbody tr").count() == 2,
+        )
+        check("no page errors in compare", not errors, str(errors))
 
         print("malformed input")
         page.set_input_files(

@@ -83,8 +83,20 @@ label.scrub{display:block;margin:14px 0 0;font:400 12px var(--mono);color:var(--
 label.scrub input{display:block;width:100%;margin:8px 0 0;accent-color:var(--cyan)}
 select{font:500 13px var(--mono);color:var(--fg);background:#1d242d;border:1px solid #333c48;border-radius:8px;min-height:44px;padding:0 10px}
 table.small{min-width:0}table.small td,table.small th{padding:6px 8px;font-size:13px}
+table.cmp{min-width:760px}
+td.best{color:var(--cyan);font-weight:600;background:#16222d}td.best small{font:500 10px var(--mono);letter-spacing:.06em;text-transform:uppercase;margin-left:6px;color:var(--cyan)}
+.cmpgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.strip{position:relative;height:14px;border-radius:3px;background:#1d242d;margin:14px 0 8px}
+.strip i{position:absolute;top:0;bottom:0;border-radius:3px}
+.strip .cursor{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--fg)}
+.strip button.divmark{position:absolute;top:-8px;bottom:-8px;width:6px;margin-left:-3px;padding:0;border:0;border-radius:3px;background:var(--red);cursor:pointer}
+#dropb{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;border:2px dashed var(--grey);border-radius:12px;padding:10px 16px;color:var(--mut);font:500 13px var(--sans)}
+#dropb.over{border-color:var(--cyan);background:#16202b}
+#dropb .names{font:400 12px var(--mono);color:var(--mut)}
+.cmpgrid .boardwrap{max-width:400px}
+.cmpgrid .reply{max-height:120px;overflow:auto}
 .fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:16px}
-@media(max-width:560px){.page{padding:16px}.fgrid{grid-template-columns:1fr}}
+@media(max-width:560px){.page{padding:16px}.fgrid,.cmpgrid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -95,6 +107,7 @@ table.small{min-width:0}table.small td,table.small th{padding:6px 8px;font-size:
       <button class="tab" data-view="overview" aria-current="page">Run overview</button>
       <button class="tab" data-view="replay">Replay</button>
       <button class="tab" data-view="failures">Failures</button>
+      <button class="tab" data-view="compare">Compare</button>
     </nav>
   </div>
 
@@ -105,6 +118,11 @@ table.small{min-width:0}table.small td,table.small th{padding:6px 8px;font-size:
       <label class="btn file-btn">Choose run folder<input id="folder" type="file" webkitdirectory directory multiple aria-label="Choose run folder"></label>
       <label class="btn file-btn">Choose files<input id="files" type="file" multiple accept=".json,.jsonl" aria-label="Choose trace files"></label>
     </div>
+  </section>
+  <section id="dropb" aria-label="Add a run to compare" hidden>
+    <span>Add a run to compare (drop a folder or choose one)</span>
+    <span class="names" id="runnames"></span>
+    <label class="btn file-btn">Add a run to compare<input id="folder-b" type="file" webkitdirectory directory multiple aria-label="Add a run to compare"></label>
   </section>
   <div id="error" role="alert" hidden></div>
   <div id="warn" hidden></div>
@@ -178,6 +196,47 @@ table.small{min-width:0}table.small td,table.small th{padding:6px 8px;font-size:
         <div class="card"><p class="cap">What the model saw</p><div id="p-obs"></div></div>
         <div class="card"><p class="cap">This window of the run</p><div id="p-win"></div></div>
       </div>
+    </div>
+  </section>
+
+  <section id="v-compare" hidden>
+    <div style="display:flex;flex-direction:column;gap:20px">
+      <div class="card" style="padding:0;overflow:hidden">
+        <div style="padding:16px 18px;border-bottom:1px solid var(--line)"><p class="cap" style="margin:0">Runs</p></div>
+        <div style="overflow-x:auto">
+          <table id="cmp-table" class="cmp"><thead><tr>
+            <th>Run</th><th>Settings</th><th>Games</th><th>Levels cleared</th><th>Actions</th><th>Fallback moves</th><th>Tokens per call</th><th>Seconds per call</th>
+          </tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+      <div class="card" id="c-help"></div>
+      <div id="c-side" style="display:flex;flex-direction:column;gap:16px" hidden>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center">
+          <label style="font:400 12px var(--mono);color:var(--mut)">Game in both runs <select id="cgame"></select></label>
+          <span class="pill" id="cmeta"></span>
+        </div>
+        <div class="card">
+          <p class="cap">Shared transport</p>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+            <button class="btn" id="c-first" aria-label="First step">|&lt;</button>
+            <button class="btn" id="c-prev" aria-label="Previous step">&lt;</button>
+            <button class="btn" id="c-play" style="min-width:104px">Play</button>
+            <button class="btn" id="c-next" aria-label="Next step">&gt;</button>
+            <button class="btn" id="c-last" aria-label="Last step">&gt;|</button>
+            <button class="btn" id="c-jump">Jump to first difference</button>
+            <span id="c-pos" style="font:500 16px var(--mono);margin-left:8px"></span>
+          </div>
+          <label class="scrub">Scrub <input type="range" id="c-scrub" min="0" max="0" value="0"></label>
+          <p class="cap" style="margin-top:20px">Where the runs played different moves</p>
+          <div class="strip" id="cstrip"></div>
+          <div class="legend" id="clegend"></div>
+        </div>
+        <div class="cmpgrid">
+          <div class="card" id="cc-A"></div>
+          <div class="card" id="cc-B"></div>
+        </div>
+      </div>
+      <p class="note">Counts differ between runs only through the games played, so read the fallback share and the per-call numbers first. One cleared level moves the score a lot; trust it across many games, not one.</p>
     </div>
   </section>
 
@@ -266,7 +325,7 @@ function buildFrames(game) {
 }
 
 // ---------------------------------------------------------------- loading
-const state = { run: null, view: 'overview', gameId: null, cur: 0, playing: false, sort: ['game', 1], fpick: 'all' };
+const state = { run: null, runB: null, cgame: null, ccur: 0,  view: 'overview', gameId: null, cur: 0, playing: false, sort: ['game', 1], fpick: 'all' };
 
 function parseJsonl(text, name) {
   const recs = []; const lines = text.split('\n'); let warn = null;
@@ -343,7 +402,7 @@ function statsOf(g, meta) {
 function showError(msg) { const e = $('error'); e.textContent = msg; e.hidden = !msg; }
 function showWarn(list) { const e = $('warn'); e.textContent = list.join('\n'); e.hidden = !list.length; }
 
-async function loadFiles(fileList) {
+async function openRun(fileList) {
   const files = [...fileList].map(f => {
     const rel = f.webkitRelativePath || f.fullPath || '';
     return { name: rel || f.name, rel: f.webkitRelativePath, text: () => f.text() };
@@ -352,14 +411,24 @@ async function loadFiles(fileList) {
     const run = await buildRun(files);
     const first = files.find(f => f.rel);
     run.label = first ? first.rel.split('/')[0] : (run.meta.run_id || 'run');
-    stop();
-    state.run = run; state.gameId = null; state.cur = 0; state.view = 'overview';
-    showError(''); showWarn(run.warns);
-    render();
+    stop(); showError(''); showWarn(run.warns);
+    return run;
   } catch (e) {
     if (!(e instanceof TraceError)) console.error(e);
     showError('Could not open this trace.\n' + (e instanceof TraceError ? e.message : 'Unexpected problem: ' + e.message));
+    return null;
   }
+}
+async function loadFiles(fileList) {
+  const run = await openRun(fileList); if (!run) return;
+  state.run = run; state.gameId = null; state.cur = 0; state.view = 'overview'; state.ccur = 0; state.cgame = null;
+  render();
+}
+// the second run (B); a third load replaces B, a new first load replaces A and keeps B
+async function loadFilesB(fileList) {
+  const run = await openRun(fileList); if (!run) return;
+  state.runB = run; state.ccur = 0; state.cgame = null; state.view = 'compare';
+  render();
 }
 
 // drag and drop, including folders (webkitGetAsEntry)
@@ -377,14 +446,18 @@ function readEntry(entry, out) {
   });
 }
 const drop = $('drop');
-['dragenter', 'dragover'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); }));
-['dragleave', 'drop'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove('over'); }));
-drop.addEventListener('drop', async e => {
-  const items = e.dataTransfer.items; const out = [];
-  if (items && items.length && items[0].webkitGetAsEntry) await Promise.all([...items].map(i => i.webkitGetAsEntry()).filter(Boolean).map(en => readEntry(en, out)));
-  else out.push(...e.dataTransfer.files);
-  loadFiles(out);
-});
+function wireDrop(zone, load) {
+  ['dragenter', 'dragover'].forEach(t => zone.addEventListener(t, e => { e.preventDefault(); zone.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(t => zone.addEventListener(t, e => { e.preventDefault(); zone.classList.remove('over'); }));
+  zone.addEventListener('drop', async e => {
+    const items = e.dataTransfer.items; const out = [];
+    if (items && items.length && items[0].webkitGetAsEntry) await Promise.all([...items].map(i => i.webkitGetAsEntry()).filter(Boolean).map(en => readEntry(en, out)));
+    else out.push(...e.dataTransfer.files);
+    load(out);
+  });
+}
+wireDrop(drop, loadFiles); wireDrop($('dropb'), loadFilesB);
+$('folder-b').addEventListener('change', e => { loadFilesB(e.target.files); e.target.value = ''; });
 $('folder').addEventListener('change', e => { loadFiles(e.target.files); e.target.value = ''; });
 $('files').addEventListener('change', e => { loadFiles(e.target.files); e.target.value = ''; });
 
@@ -400,11 +473,14 @@ function render() {
   drop.classList.toggle('slim', !!r);
   $('drop-title').textContent = r ? 'Open another run (drop a folder or choose one)' : 'Drop a run folder here';
   $('runlabel').textContent = r ? r.label + (r.meta.model ? ' / ' + r.meta.model : '') + ' / ' + r.games.length + ' game' + (r.games.length === 1 ? '' : 's') : 'no run loaded';
+  $('dropb').hidden = !r;
+  $('runnames').textContent = r ? 'A: ' + r.label + (state.runB ? '   B: ' + state.runB.label : '   B: none yet') : '';
   document.querySelectorAll('.tab').forEach(b => { if (b.dataset.view === state.view && r) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
-  for (const v of ['overview', 'replay', 'failures']) $('v-' + v).hidden = !r || state.view !== v;
+  for (const v of ['overview', 'replay', 'failures', 'compare']) $('v-' + v).hidden = !r || state.view !== v;
   if (!r) return;
   if (state.view === 'overview') renderOverview();
   else if (state.view === 'replay') { if (!state.gameId) state.gameId = r.games[0].id; renderReplay(); }
+  else if (state.view === 'compare') renderCompare();
   else renderFailures();
 }
 
@@ -464,7 +540,7 @@ function renderOverview() {
 
 // ---------------------------------------------------------------- replay
 let timer = null;
-function stop() { state.playing = false; clearInterval(timer); timer = null; const b = $('b-play'); if (b) b.textContent = 'Play'; }
+function stop() { state.playing = false; clearInterval(timer); timer = null; for (const id of ['b-play', 'c-play']) { const b = $(id); if (b) b.textContent = 'Play'; } }
 function go(n) { const g = curGame(); if (!g) return; state.cur = Math.max(0, Math.min(g.frames.length - 1, n)); drawFrame(); }
 function stepAt(g, frame) { return frame > 0 ? g.steps[frame - 1] : null; }
 const levelsBefore = (g, frame) => frame <= 1 ? (g.start.levels ?? 0) : g.steps[frame - 2].levels;
@@ -488,12 +564,15 @@ function renderReplay() {
   drawFrame();
 }
 
-function drawFrame() {
-  const g = curGame(), f = state.cur, N = g.frames.length, s = stepAt(g, f);
-  const px = g.frames[f], cv = $('board'), ctx = cv.getContext('2d');
-  const img = ctx.createImageData(64, 64);
+function paintBoard(cv, px) {
+  const ctx = cv.getContext('2d'), img = ctx.createImageData(64, 64);
   for (let i = 0; i < 4096; i++) { const c = RGB[px[i]]; img.data[i * 4] = c[0]; img.data[i * 4 + 1] = c[1]; img.data[i * 4 + 2] = c[2]; img.data[i * 4 + 3] = 255; }
   ctx.putImageData(img, 0, 0);
+}
+
+function drawFrame() {
+  const g = curGame(), f = state.cur, N = g.frames.length, s = stepAt(g, f);
+  paintBoard($('board'), g.frames[f]);
   $('scrub').value = f;
   document.querySelectorAll('#bars .bar').forEach(b => b.classList.toggle('cur', +b.dataset.frame === f));
   $('b-first').disabled = $('b-prev').disabled = f === 0; $('b-next').disabled = $('b-last').disabled = f === N - 1;
@@ -535,14 +614,15 @@ const none = t => el('div', { class: 'ph' }, t);
 const moveText = m => m.name + (Number.isFinite(m.x) ? ' (' + m.x + ', ' + m.y + ')' : '');
 const SRC = { model: ['model call', 'cyan'], queued: ['queued from plan', ''], fallback: ['fallback', 'amber'], forced_reset: ['forced reset', 'red'] };
 
+const changeLine = s => { const c = s.change; return !c ? 'not recorded' : c.n ? fmt(c.n) + ' cells' + (c.bbox ? ' in x' + c.bbox[0] + '-' + c.bbox[2] + ', y' + c.bbox[1] + '-' + c.bbox[3] : '') : 'nothing changed'; };
+
 function panels(g, f, s) {
   const st = g.stats;
   if (!s) {
     $('p-step').replaceChildren(row('Step', 'start'), row('Levels completed', (g.start.levels ?? 0) + ' of ' + st.of), row('Game state', g.start.state || '?'), row('What changed', 'first frame of this game'));
     for (const id of ['p-move', 'p-motion', 'p-reply', 'p-plan', 'p-effects']) $(id).replaceChildren(none('Before the first move.'));
   } else {
-    const c = s.change || {};
-    const changeText = !s.change ? 'not recorded' : c.n ? fmt(c.n) + ' cells' + (c.bbox ? ' in x' + c.bbox[0] + '-' + c.bbox[2] + ', y' + c.bbox[1] + '-' + c.bbox[3] : '') : 'nothing changed';
+    const changeText = changeLine(s);
     $('p-step').replaceChildren(row('Step', String(s.step)), row('Levels completed', (s.levels ?? 0) + ' of ' + (s.win_levels ?? st.of)), row('Game state', s.state || '?'), row('What changed', changeText));
     const [lab, cls] = SRC[s.src] || [String(s.src), ''];
     fill($('p-move'),
@@ -594,6 +674,145 @@ $('b-play').onclick = () => {
   const g = curGame(); if (state.cur >= g.frames.length - 1) go(0);
   state.playing = true; $('b-play').textContent = 'Pause';
   timer = setInterval(() => { const gg = curGame(); if (!gg || state.cur >= gg.frames.length - 1) { stop(); return; } go(state.cur + 1); }, 500);
+};
+
+// ---------------------------------------------------------------- compare
+const RESERVED = ['v', 'run_id', 'model', 'bundle_commit', 'games', 'baseline_actions', 'scorecard'];
+function settingsText(m) {
+  const bits = m.model ? [String(m.model)] : [];
+  for (const [k, v] of Object.entries(m)) if (!RESERVED.includes(k) && v !== null && typeof v !== 'object') bits.push(k + ' ' + v);
+  return bits.join(', ') || 'n/a';
+}
+function runStats(run) {
+  const T = run.games.map(g => g.stats), sum = k => T.reduce((a, s) => a + s[k], 0);
+  const actions = sum('actions'), calls = sum('calls');
+  return { games: run.games.length, levels: sum('levels'), of: sum('of'), actions, fb: actions ? sum('fallbacks') / actions : null,
+    tok: calls ? sum('callTok') / calls : null, sec: calls ? sum('callMs') / calls / 1000 : null };
+}
+// index of the best value ('max' or 'min'); none when fewer than two values or all equal
+function bestIdx(vals, dir) {
+  const ok = vals.filter(v => v != null);
+  if (ok.length < 2 || ok.every(v => v === ok[0])) return [];
+  const t = dir === 'max' ? Math.max(...ok) : Math.min(...ok);
+  return vals.map((v, i) => v === t ? i : -1).filter(i => i >= 0);
+}
+function sharedGames() {
+  if (!state.run || !state.runB) return [];
+  const ids = new Set(state.runB.games.map(g => g.id));
+  return state.run.games.map(g => g.id).filter(id => ids.has(id));
+}
+const cgames = () => [state.run, state.runB].map(r => r.games.find(g => g.id === state.cgame));
+const cframes = () => Math.max(...cgames().map(g => g.frames.length));
+// first frame (>= 1) at which both runs played a step and the moves differ; null when they never do
+function divergence(ga, gb) {
+  const n = Math.min(ga.steps.length, gb.steps.length);
+  for (let i = 0; i < n; i++) if (JSON.stringify(ga.steps[i].moves || []) !== JSON.stringify(gb.steps[i].moves || [])) return i + 1;
+  return null;
+}
+
+function renderCompare() {
+  const runs = [state.run, state.runB].filter(Boolean), S = runs.map(runStats);
+  const best = {
+    levels: bestIdx(S.map(s => s.levels), 'max'),
+    actions: S[0].games === (S[1] || {}).games ? bestIdx(S.map(s => s.actions), 'min') : [],
+    fb: bestIdx(S.map(s => s.fb), 'min'), tok: bestIdx(S.map(s => s.tok), 'min'), sec: bestIdx(S.map(s => s.sec), 'min'),
+  };
+  const cell = (k, i, text) => el('td', { class: best[k].includes(i) ? 'best' : null, 'data-col': k }, text, best[k].includes(i) ? el('small', null, 'best') : null);
+  const tb = $('cmp-table').querySelector('tbody'); tb.replaceChildren();
+  runs.forEach((r, i) => {
+    const s = S[i];
+    tb.append(el('tr', { 'data-run': 'AB'[i] },
+      el('td', { style: 'font-weight:500' }, 'AB'[i] + ': ' + r.label),
+      el('td', { style: 'color:var(--mut);font-size:13px;max-width:320px' }, settingsText(r.meta)),
+      el('td', null, String(s.games)),
+      cell('levels', i, s.levels + ' of ' + s.of),
+      cell('actions', i, fmt(s.actions)),
+      cell('fb', i, s.fb == null ? 'n/a' : (100 * s.fb).toFixed(1) + '%'),
+      cell('tok', i, s.tok == null ? 'n/a' : String(Math.round(s.tok))),
+      cell('sec', i, s.sec == null ? 'n/a' : s.sec.toFixed(1) + ' s')));
+  });
+  const shared = sharedGames();
+  $('c-side').hidden = !shared.length;
+  $('c-help').hidden = !!shared.length;
+  if (!shared.length) {
+    stop();
+    $('c-help').replaceChildren(el('p', { class: 'cap' }, 'Same game, two runs side by side'),
+      el('p', { class: 'note', id: 'c-msg' }, state.runB
+        ? 'These two runs share no game, so there is nothing to put side by side. Add a run that played at least one of the same games.'
+        : 'Only one run is loaded. Use "Add a run to compare" above to open a second run folder (a drop works too); you will then get this table with two rows and the same game played by both runs side by side, with the first move where they differ marked.'));
+    return;
+  }
+  if (!shared.includes(state.cgame)) { state.cgame = shared[0]; state.ccur = 0; }
+  $('cgame').replaceChildren(...shared.map(id => el('option', { value: id, selected: id === state.cgame }, id)));
+  const [ga, gb] = cgames(), N = cframes();
+  $('c-scrub').max = N - 1;
+  const d = divergence(ga, gb);
+  $('cmeta').textContent = 'A ' + ga.steps.length + ' steps / B ' + gb.steps.length + ' steps';
+  const pos = f => N > 1 ? 100 * f / (N - 1) : 0;
+  const strip = $('cstrip'); strip.replaceChildren();
+  const last = Math.min(ga.frames.length, gb.frames.length) - 1;
+  const seg = (a, b, color, cls) => b > a ? strip.append(el('i', { class: cls, style: 'left:' + pos(a) + '%;width:' + (pos(b) - pos(a)) + '%;background:' + color })) : 0;
+  seg(0, d == null ? last : d - 1, 'var(--cyan)', 'seg-same');
+  if (d != null) seg(d - 1, last, 'var(--amber)', 'seg-diff');
+  seg(last, N - 1, 'var(--grey)', 'seg-ended');
+  if (d != null) strip.append(el('button', { class: 'divmark', id: 'cdiv', style: 'left:' + pos(d - 1) + '%', 'aria-label': 'First different move at step ' + (d - 1) + ', jump there', onclick: () => { stop(); cgo(d); } }));
+  strip.append(el('u', { class: 'cursor', id: 'ccursor' }));
+  $('clegend').replaceChildren(
+    el('span', null, el('i', { style: 'background:var(--cyan)' }), 'same moves'), el('span', null, el('i', { style: 'background:var(--amber)' }), 'moves differ from here'),
+    el('span', null, el('i', { style: 'background:var(--grey)' }), 'only the longer run is still playing'), el('span', null, el('i', { style: 'background:var(--red)' }), 'first difference'),
+    el('span', { id: 'c-divtext' }, d == null ? 'The runs never play different moves in the steps both have.' : 'First different move: step ' + (d - 1) + '.'));
+  const jump = $('c-jump'); jump.disabled = d == null; jump.dataset.frame = d == null ? '' : d;
+  if (state.ccur >= N) state.ccur = 0;
+  drawCompare();
+}
+
+function cgo(n) { state.ccur = Math.max(0, Math.min(cframes() - 1, n)); drawCompare(); }
+
+function sideCard(i, g, k) {
+  const L = 'AB'[i], ended = k > g.frames.length - 1, f = Math.min(k, g.frames.length - 1), s = stepAt(g, f);
+  paintBoard($('cv' + L), g.frames[f]);
+  const [lab, cls] = s ? (SRC[s.src] || [String(s.src), '']) : ['', ''];
+  const rc = s && s.reply && s.reply.content ? s.reply.content : '';
+  return { ended, f, s, lab, cls, rc };
+}
+function drawCompare() {
+  const gs = cgames(), N = cframes(), k = state.ccur;
+  for (const i of [0, 1]) {
+    const L = 'AB'[i], card = $('cc-' + L), g = gs[i], r = [state.run, state.runB][i];
+    if (!card.querySelector('canvas')) card.append(
+      el('p', { class: 'cap', 'data-role': 'title' }),
+      el('div', { class: 'boardwrap' }, el('canvas', { id: 'cv' + L, width: 64, height: 64, role: 'img', 'aria-label': 'Run ' + L + ' board' })),
+      el('div', { 'data-role': 'info', style: 'display:flex;flex-direction:column;gap:10px;margin-top:14px' }));
+    const { ended, f, s, lab, cls, rc } = sideCard(i, g, k);
+    card.querySelector('[data-role=title]').textContent = L + ': ' + r.label;
+    const moves = s && !ended ? (s.moves || []) : [];
+    fill(card.querySelector('[data-role=info]'),
+      el('div', { class: 'kv', style: 'margin:0' },
+        el('span', { class: 'pill' + (ended ? ' red' : ''), 'data-role': 'stepname' }, ended ? 'ended' : s ? 'step ' + s.step : 'start'),
+        ended ? el('span', { class: 'pill' }, 'holding its last frame, step ' + g.steps[g.steps.length - 1].step) : null,
+        s && !ended ? el('span', { class: 'pill ' + cls, 'data-role': 'src' }, lab) : null,
+        ...moves.map(m => el('span', { class: 'chip cur', 'data-role': 'move' }, moveText(m)))),
+      el('div', { class: 'box reply', 'data-role': 'reply' }, ended ? 'This run has no more steps.' : s ? (rc ? (rc.length > 240 ? rc.slice(0, 240) + '...' : rc) : '(no model reply on this step)') : 'Before the first move.'),
+      el('div', { class: 'note', 'data-role': 'change' }, 'What changed: ' + (ended ? 'nothing, the run is over' : s ? changeLine(s) : 'first frame of this game')));
+  }
+  $('c-scrub').value = k;
+  $('c-first').disabled = $('c-prev').disabled = k === 0; $('c-next').disabled = $('c-last').disabled = k === N - 1;
+  $('c-pos').textContent = k === 0 ? 'start' : 'step ' + (k - 1);
+  const cur = $('ccursor'); if (cur) cur.style.left = (N > 1 ? 100 * k / (N - 1) : 0) + '%';
+}
+
+$('cgame').addEventListener('change', e => { stop(); state.cgame = e.target.value; state.ccur = 0; renderCompare(); });
+$('c-first').onclick = () => { stop(); cgo(0); };
+$('c-prev').onclick = () => { stop(); cgo(state.ccur - 1); };
+$('c-next').onclick = () => { stop(); cgo(state.ccur + 1); };
+$('c-last').onclick = () => { stop(); cgo(1e9); };
+$('c-jump').onclick = () => { stop(); cgo(+$('c-jump').dataset.frame); };
+$('c-scrub').addEventListener('input', e => { stop(); cgo(+e.target.value); });
+$('c-play').onclick = () => {
+  if (state.playing) { stop(); return; }
+  if (state.ccur >= cframes() - 1) cgo(0);
+  state.playing = true; $('c-play').textContent = 'Pause';
+  timer = setInterval(() => { if (state.ccur >= cframes() - 1) { stop(); return; } cgo(state.ccur + 1); }, 500);
 };
 
 // ---------------------------------------------------------------- failures
