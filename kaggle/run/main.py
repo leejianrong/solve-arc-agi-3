@@ -33,7 +33,7 @@ GRACE_S = (
     15 * 60
 )  # time for the agents to finish and the scorecard to close after the deadline
 
-BUNDLE = find_dataset("solve-arc-agi-3-src")
+BUNDLE = find_dataset(os.getenv("ARC3_BUNDLE_SLUG", "solve-arc-agi-3-src"))
 MODEL = find_dataset("vrfai-qwen3-6-27b-fp8-hf-snapshot")
 WHEELS = find_dataset("arc3-vllm-h100-wheelhouse-v3")
 COMP = Path("/kaggle/input/competitions/arc-prize-2026-arc-agi-3")
