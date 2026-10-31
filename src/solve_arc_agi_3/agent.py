@@ -621,7 +621,13 @@ class BaselineAgentCore:
         self._plan_full: list[ActionDecision] = []
         self._plan_pos = 0
         self._call_nudged = False
-        self._mover: Region | None = None  # last object seen moving
+        self._mover: Region | None = (
+            None  # the controlled object, chosen by consistency
+        )
+        self._mover_twins: list[Region] = []  # same colour and size, moved alongside it
+        self._mover_score: dict[
+            tuple[int, int], int
+        ] = {}  # moves each object type took part in
         self._move_status = ""
         self._ignored_calls = 0  # extra parallel tool calls dropped from the last reply
         self._counter_boxes: list[
@@ -675,6 +681,34 @@ class BaselineAgentCore:
     def history(self) -> tuple[str, ...]:
         return tuple(self._history)
 
+    def _pick_mover(
+        self, pairs: list[tuple[Region, Region]]
+    ) -> tuple[Region, Region] | None:
+        """Keep the controlled object type while it keeps moving; switch on 2+ moves more evidence.
+
+        Within the type, take the instance nearest the previous position (twins move in lockstep).
+        """
+
+        types = {(b.color, b.size) for _, b in pairs}
+        for t in types:
+            self._mover_score[t] = self._mover_score.get(t, 0) + 1
+        cur = (self._mover.color, self._mover.size) if self._mover else None
+        best = max(types, key=lambda t: self._mover_score[t])
+        if cur not in types and (
+            cur is None or self._mover_score[best] >= self._mover_score.get(cur, 0) + 2
+        ):
+            cur = best
+        mine = [p for p in pairs if (p[1].color, p[1].size) == cur]
+        if not mine:  # the controlled object stayed put; something else drifted
+            return None
+        last = self._mover
+        if last is not None:
+            mine.sort(key=lambda p: abs(p[0].x0 - last.x0) + abs(p[0].y0 - last.y0))
+        old, new = mine[0]
+        self._mover = new
+        self._mover_twins = [p[1] for p in mine[1:]]
+        return old, new
+
     def _settle_pending(self, observation: Observation) -> None:
         """Turn the last action into a history line now that its result is visible."""
 
@@ -708,9 +742,9 @@ class BaselineAgentCore:
             )
             self._motions.setdefault(key, Counter())[kind] += 1
         strip_only = bool(keys) and all(k[0] in ("row", "col") for k in keys)
-        if pairs:
-            self._mover = pairs[0][1]
-            dx, dy = pairs[0][1].x0 - pairs[0][0].x0, pairs[0][1].y0 - pairs[0][0].y0
+        picked = self._pick_mover(pairs) if pairs else None
+        if picked:
+            dx, dy = picked[1].x0 - picked[0].x0, picked[1].y0 - picked[0].y0
             self._move_status = f"{label} MOVED the object by ({dx:+d},{dy:+d})"
         elif raw == 0 or (raw > 0 and (not changed or strip_only)):
             why = "nothing changed" if raw == 0 else "only a counter or timer changed"
@@ -751,7 +785,11 @@ class BaselineAgentCore:
         self._history.append(
             f"{self._steps}. {label} -> {observation.state}, {change[:150]}{note}{level}"
         )
-        self._since_call.append(f"{label}: {change[:110]}{note}{level}")
+        self._since_call.append(
+            f"{self._move_status}: {change[:110]}{note}{level}"
+            if picked
+            else f"{label}: {change[:110]}{note}{level}"
+        )
         del self._history[: -self._history_lines]
         self.last_settled = {
             "n": max(raw, 0),
@@ -873,6 +911,12 @@ class BaselineAgentCore:
             if m
             else "No object has been seen moving yet. "
         )
+        if m and self._mover_twins:
+            t = self._mover_twins[0]
+            where = (
+                where.rstrip()
+                + f" (+{len(self._mover_twins)} identical twin at x{t.x0}-{t.x1},y{t.y0}-{t.y1}). "
+            )
         return f"STATUS: {where}Last move: {self._move_status}.\n{self._untried_line(observation)}{nav}"
 
     def _observation_text(self, observation: Observation) -> str:
