@@ -7,12 +7,20 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, os.getcwd())
-logging.basicConfig(level=logging.INFO, stream=sys.stdout, format="%(asctime)s | %(levelname)s | %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    stream=sys.stdout,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+)
 
-from agents import Swarm  # noqa: E402
+from agents import Swarm
+
+from solve_arc_agi_3.step_trace import finish_run_dir
 
 env_dir = Path(os.environ["ENVIRONMENTS_DIR"])
-games = sorted(json.loads(p.read_text())["game_id"] for p in env_dir.glob("*/*/metadata.json"))
+games = sorted(
+    json.loads(p.read_text())["game_id"] for p in env_dir.glob("*/*/metadata.json")
+)
 want = int(os.environ.get("ARC3_DRY_GAMES", "6"))
 games = games[:want]
 print("dry-run games:", games, flush=True)
@@ -23,3 +31,16 @@ if card is not None:
     if out:  # the full scorecard, for tooling; the log line below stays short
         Path(out).write_text(dump)
     print("SCORECARD", dump[:6000], flush=True)
+    trace_dir, run_id = os.environ.get("ARC3_TRACE_DIR"), os.environ.get("ARC3_RUN_ID")
+    if (
+        trace_dir and run_id
+    ):  # fill in the end of the trace run: scorecard and human baselines
+        data = card.model_dump()
+        baselines = {
+            e["id"]: r["level_baseline_actions"]
+            for e in data.get("environments", [])
+            for r in e.get("runs", [])[:1]
+        }
+        finish_run_dir(
+            Path(trace_dir) / run_id, {"score": data.get("score")}, baselines
+        )

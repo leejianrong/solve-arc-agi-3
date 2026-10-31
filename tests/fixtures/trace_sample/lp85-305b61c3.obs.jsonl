@@ -1,0 +1,4 @@
+{"step": 0, "text": "state NOT_FINISHED levels 0/3\nACTION1: not tried\n(hex grid omitted in this fixture)"}
+{"step": 1, "text": "state NOT_FINISHED levels 0/3\nACTION1: tried 1, changed 1\nobjects: colour 5 size 16 at (14,12)"}
+{"step": 2, "text": "state NOT_FINISHED levels 0/3\nACTION1: tried 2, changed 2"}
+{"step": 5, "text": "state NOT_FINISHED levels 1/3\nnew level; objects: colour 4 size 64 at (23,23)"}

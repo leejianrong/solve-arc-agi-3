@@ -22,7 +22,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from env import VENV, build_venv, find_dataset, log, runtime_env  # noqa: E402
+from env import VENV, build_venv, find_dataset, log, runtime_env
 
 BUNDLE_SLUG = "leejianrong/solve-arc-agi-3-src"
 BUNDLE_DIR = Path("/kaggle/input/datasets/leejianrong/solve-arc-agi-3-src")
@@ -39,7 +39,21 @@ def refresh_bundle() -> None:
     tmp = Path("/tmp/bundle-dl")
     shutil.rmtree(tmp, ignore_errors=True)
     tmp.mkdir(parents=True)
-    subprocess.run(["kaggle", "datasets", "download", "-d", BUNDLE_SLUG, "-p", str(tmp), "--unzip", "-q"], check=True, timeout=300)
+    subprocess.run(
+        [
+            "kaggle",
+            "datasets",
+            "download",
+            "-d",
+            BUNDLE_SLUG,
+            "-p",
+            str(tmp),
+            "--unzip",
+            "-q",
+        ],
+        check=True,
+        timeout=300,
+    )
     shutil.rmtree(BUNDLE_DIR, ignore_errors=True)
     BUNDLE_DIR.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(tmp, BUNDLE_DIR)
@@ -52,13 +66,27 @@ def boot_server() -> subprocess.Popen[bytes]:
     env = runtime_env(BUNDLE_DIR)
     manifest = str(BUNDLE_DIR / "configs/baselines/duck-control-v1.json")
     run_dir = Path(f"/tmp/arc3-lab-run-{int(time.time())}")
-    cmd = [str(VENV / "bin/python"), "-m", "solve_arc_agi_3", "serve", "--manifest", manifest, "--model-dir", str(model),
-           "--wheelhouse-dir", str(wheels), "--run-dir", str(run_dir)]
+    cmd = [
+        str(VENV / "bin/python"),
+        "-m",
+        "solve_arc_agi_3",
+        "serve",
+        "--manifest",
+        manifest,
+        "--model-dir",
+        str(model),
+        "--wheelhouse-dir",
+        str(wheels),
+        "--run-dir",
+        str(run_dir),
+    ]
     server = subprocess.Popen(cmd, env=env, start_new_session=True)
     t = time.time()
     while server.poll() is None:
         try:
-            with urllib.request.urlopen("http://127.0.0.1:1234/v1/models", timeout=5) as r:
+            with urllib.request.urlopen(
+                "http://127.0.0.1:1234/v1/models", timeout=5
+            ) as r:
                 if r.status == 200:
                     break
         except Exception:
@@ -68,24 +96,37 @@ def boot_server() -> subprocess.Popen[bytes]:
         # The pod (and its disk) disappears right after the job, so put the evidence in the job log now.
         for f in sorted(run_dir.glob("*.log"))[:2]:
             lines = f.read_text(errors="replace").splitlines()
-            err = [i for i, x in enumerate(lines) if "Error" in x or "ERROR" in x or "FAILED" in x]
+            err = [
+                i
+                for i, x in enumerate(lines)
+                if "Error" in x or "ERROR" in x or "FAILED" in x
+            ]
             start = max(0, (err[0] if err else len(lines) - 40) - 5)
-            print(f"LAB_VLLM_LOG {f.name} ({len(lines)} lines), first error near line {err[0] if err else None}:", flush=True)
+            print(
+                f"LAB_VLLM_LOG {f.name} ({len(lines)} lines), first error near line {err[0] if err else None}:",
+                flush=True,
+            )
             print("\n".join(x[:300] for x in lines[start : start + 60]), flush=True)
         raise RuntimeError(f"vLLM exited early (code {server.poll()})")
-    log(f"LAB_SERVER_READY after {time.time() - t:.0f}s of serving (T+{time.time() - START:.0f}s)")
+    log(
+        f"LAB_SERVER_READY after {time.time() - t:.0f}s of serving (T+{time.time() - START:.0f}s)"
+    )
     return server
 
 
 def prepare_agents_repo() -> Path:
     repo = WORK / "ARC-AGI-3-Agents"
     shutil.rmtree(repo, ignore_errors=True)
-    shutil.copytree(COMP / "ARC-AGI-3-Agents", repo, ignore=shutil.ignore_patterns(".git"))
+    shutil.copytree(
+        COMP / "ARC-AGI-3-Agents", repo, ignore=shutil.ignore_patterns(".git")
+    )
     (repo / "agents/templates/my_agent.py").write_text(
-        "from agents.agent import Agent\nfrom solve_arc_agi_3.kaggle_agent import agent_class_from_env\n\nMyAgent = agent_class_from_env(Agent)\n")
+        "from agents.agent import Agent\nfrom solve_arc_agi_3.kaggle_agent import agent_class_from_env\n\nMyAgent = agent_class_from_env(Agent)\n"
+    )
     (repo / "agents/__init__.py").write_text(
         "from typing import Type\nfrom dotenv import load_dotenv\nfrom .agent import Agent, Playback\nfrom .swarm import Swarm\n"
-        "from .templates.my_agent import MyAgent\n\nload_dotenv()\nAVAILABLE_AGENTS: dict[str, Type[Agent]] = {\"myagent\": MyAgent}\n")
+        'from .templates.my_agent import MyAgent\n\nload_dotenv()\nAVAILABLE_AGENTS: dict[str, Type[Agent]] = {"myagent": MyAgent}\n'
+    )
     return repo
 
 
@@ -137,8 +178,13 @@ def run_experiment(exp: dict[str, object]) -> dict[str, object]:
     env.update({k: str(v) for k, v in dict(exp.get("env", {})).items()})  # type: ignore[call-overload]
     log(f"LAB_START {name} env={exp.get('env')} seconds={seconds}")
     t = time.time()
-    proc = subprocess.Popen([AGENT_PY, str(BUNDLE_DIR / "run/dry_runner.py")], cwd=repo, env=env,
-                            stdout=(out / "run.log").open("w"), stderr=subprocess.STDOUT)
+    proc = subprocess.Popen(
+        [AGENT_PY, str(BUNDLE_DIR / "run/dry_runner.py")],
+        cwd=repo,
+        env=env,
+        stdout=(out / "run.log").open("w"),
+        stderr=subprocess.STDOUT,
+    )
     try:
         proc.wait(timeout=seconds + 900)
     except subprocess.TimeoutExpired:
@@ -175,7 +221,9 @@ def main() -> None:
                 break
             if not todo:
                 if time.time() - last_beat > 300:
-                    log(f"LAB_IDLE waiting for new experiments (T+{time.time() - START:.0f}s)")
+                    log(
+                        f"LAB_IDLE waiting for new experiments (T+{time.time() - START:.0f}s)"
+                    )
                     last_beat = time.time()
                 time.sleep(30)
                 continue

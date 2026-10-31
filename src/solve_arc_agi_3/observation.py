@@ -169,3 +169,83 @@ def change_boxes(before: Grid, after: Grid) -> list[tuple[int, int, int, int, in
         ys = [c[1] for c in cells]
         boxes.append((min(xs), min(ys), max(xs), max(ys), len(cells)))
     return sorted(boxes, key=lambda b: -b[4])
+
+
+EDGE = 3  # rows or columns this close to the border count as a status strip
+MAX_COUNTER_CELLS = 16
+
+
+def region_key(
+    box: tuple[int, int, int, int, int], width: int, height: int
+) -> tuple[object, ...]:
+    """Identity of a changed region for counter detection.
+
+    A tiny region against the border (a bar that grows one cell a step along the bottom row) is keyed by its
+    rows or columns, so a moving bounding box is still recognised as the same strip. Anything else is keyed
+    by its exact box.
+    """
+
+    x0, y0, x1, y1, cells = box
+    if cells <= MAX_COUNTER_CELLS:
+        if y0 >= height - EDGE or y1 < EDGE:
+            return ("row", y0, y1)
+        if x0 >= width - EDGE or x1 < EDGE:
+            return ("col", x0, x1)
+    return ("box", x0, y0, x1, y1)
+
+
+def describe_key(key: tuple[object, ...]) -> str:
+    if key[0] == "row":
+        return f"rows y{key[1]}-{key[2]}"
+    if key[0] == "col":
+        return f"columns x{key[1]}-{key[2]}"
+    return f"x{key[1]}-{key[3]} y{key[2]}-{key[4]}"
+
+
+def object_motion(
+    before: Grid, after: Grid, *, limit: int = 4, max_distance: int = 24
+) -> list[tuple[Region, Region]]:
+    """Objects that kept their colour and size but changed position, largest move first."""
+
+    if not before or not after or changed_count(before, after) <= 0:
+        return []
+    bg = background_color(after)
+    old, new = segment(before, background=bg), segment(after, background=bg)
+
+    def ident(r: Region) -> tuple[int, int, int, int, int, int]:
+        return (r.color, r.size, r.x0, r.y0, r.x1, r.y1)
+
+    same = Counter(ident(r) for r in new) & Counter(ident(r) for r in old)
+    left_new, left_old = [], list(old)
+    budget = Counter(same)
+    for r in new:
+        if budget[ident(r)] > 0:
+            budget[ident(r)] -= 1
+        else:
+            left_new.append(r)
+    budget = Counter(same)
+    left_old = []
+    for r in old:
+        if budget[ident(r)] > 0:
+            budget[ident(r)] -= 1
+        else:
+            left_old.append(r)
+    pairs = []
+    for r in left_new:
+        candidates = [o for o in left_old if (o.color, o.size) == (r.color, r.size)]
+        if not candidates:
+            continue
+        nearest = min(candidates, key=lambda o: abs(o.x0 - r.x0) + abs(o.y0 - r.y0))
+        distance = abs(nearest.x0 - r.x0) + abs(nearest.y0 - r.y0)
+        if distance <= max_distance:
+            left_old.remove(nearest)
+            pairs.append((nearest, r))
+    pairs.sort(key=lambda p: -(abs(p[0].x0 - p[1].x0) + abs(p[0].y0 - p[1].y0)))
+    return pairs[:limit]
+
+
+def describe_motion(pairs: list[tuple[Region, Region]]) -> str:
+    return "; ".join(
+        f"color {a.color} size {a.size} moved ({b.x0 - a.x0:+d},{b.y0 - a.y0:+d}) from {a.center} to {b.center}"
+        for a, b in pairs
+    )

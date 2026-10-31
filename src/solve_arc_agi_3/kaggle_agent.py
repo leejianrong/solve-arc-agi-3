@@ -26,6 +26,7 @@ from .agent import (
     default_arcengine_action_mapper,
 )
 from .inference import InferenceClient, InferenceRequest, InferenceResponse
+from .step_trace import RunTrace
 
 logger = logging.getLogger(__name__)
 
@@ -88,12 +89,35 @@ def fallback_decision(available_actions: tuple[int, ...], step: int) -> ActionDe
     return ActionDecision(name=f"ACTION{action_id}", data=data, source="fallback")
 
 
+def _reply_fields(
+    response: InferenceResponse | None,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """The ``call`` and ``reply`` parts of a trace record for the latest model response."""
+
+    if response is None:
+        return {"ok": False}, None
+    call = {
+        "ms": round(response.elapsed_seconds * 1000),
+        "prompt_tokens": response.usage.prompt_tokens,
+        "completion_tokens": response.usage.completion_tokens,
+        "ok": True,
+    }
+    reply = {
+        "content": response.content,
+        "reasoning_tail": response.reasoning or "",
+        "tool_calls": [c.function.arguments for c in response.tool_calls],
+    }
+    return call, reply
+
+
 def make_agent_class(
     base: type,
     *,
     limits: RunLimits,
     client: InferenceClient,
     action_mapper: Callable[[ActionDecision], object] = default_arcengine_action_mapper,
+    trace: RunTrace | None = None,
+    use_ledger: bool = False,
 ) -> type:
     """Build the submission agent on top of the official ``Agent`` (or a test double)."""
 
@@ -105,16 +129,84 @@ def make_agent_class(
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             super().__init__(*args, **kwargs)
             self._adapter = OfficialAgentAdapter(
-                BaselineAgentCore(client), action_mapper=action_mapper
+                BaselineAgentCore(client, use_ledger=use_ledger),
+                action_mapper=action_mapper,
             )
             self._fallbacks = 0
+            self._trace = trace.game(self.game_id) if trace is not None else None
+            self._started = False
+            self._awaiting: dict[str, Any] | None = None
+
+        def _write_trace(self, frames: list[Any], latest_frame: Any) -> None:
+            """Write the start record, and the record of the last move now that its result is visible."""
+
+            if self._trace is None:
+                return
+            obs = self._adapter.observation(frames, latest_frame)
+            if not obs.grid:
+                return
+            if not self._started:
+                self._started = True
+                self._trace.start(
+                    self.game_id,
+                    obs.grid,
+                    obs.state,
+                    obs.levels_completed,
+                    obs.win_levels,
+                    obs.available_actions,
+                )
+                return
+            turn, self._awaiting = self._awaiting, None
+            if turn is None:
+                return
+            core = self._adapter.core
+            core.settle(obs)
+            self._trace.step(
+                game=self.game_id,
+                src=turn["src"],
+                move=turn["move"],
+                grid=obs.grid,
+                state=obs.state,
+                levels=obs.levels_completed,
+                win_levels=obs.win_levels,
+                avail=obs.available_actions,
+                call=turn.get("call"),
+                reply=turn.get("reply"),
+                plan=turn.get("plan"),
+                plan_idx=turn.get("plan_idx"),
+                nudge=bool(turn.get("nudge")),
+                error=turn.get("error"),
+                settled=core.last_settled or None,
+                obs_text=turn.get("obs_text"),
+            )
 
         def is_done(self, frames: list[Any], latest_frame: Any) -> bool:
+            self._write_trace(frames, latest_frame)
             return _state_text(latest_frame.state) == "WIN" or limits.expired()
 
         def choose_action(self, frames: list[Any], latest_frame: Any) -> Any:
+            self._write_trace(frames, latest_frame)
+            action, turn = self._decide(frames, latest_frame)
+            if self._trace is not None:
+                self._awaiting = turn
+            return action
+
+        def _decide(
+            self, frames: list[Any], latest_frame: Any
+        ) -> tuple[Any, dict[str, Any]]:
+            core = self._adapter.core
+            core.last_response = (
+                None  # so a failed request is never blamed on an older reply
+            )
             if _state_text(latest_frame.state) in _RESET_STATES:
-                return action_mapper(ActionDecision(name="RESET", source="forced"))
+                decision = ActionDecision(name="RESET", source="forced")
+                core.note_move(
+                    self._adapter.observation(frames, latest_frame), decision
+                )
+                return action_mapper(decision), {
+                    "src": "forced_reset",
+                    "move": {"name": "RESET"},
+                }
             try:
                 if not limits.wait_ready():
                     raise TimeoutError(
@@ -122,25 +214,40 @@ def make_agent_class(
                     )
                 with limiter:
                     try:
-                        return self._adapter.choose_action(frames, latest_frame)
+                        action = self._adapter.choose_action(frames, latest_frame)
                     except (
                         ValueError
                     ):  # the reply held no usable move: ask once more, plainly
                         self._adapter.request_nudge()
-                        return self._adapter.choose_action(frames, latest_frame)
-            except Exception:  # model/parse failure must not end the game
+                        action = self._adapter.choose_action(frames, latest_frame)
+                turn = dict(core.last_turn)
+                if turn.get("src") == "model":
+                    turn["call"], turn["reply"] = _reply_fields(core.last_response)
+                    turn["obs_text"] = core.last_observation_text
+                return action, turn
+            except Exception as exc:  # model/parse failure must not end the game
                 self._fallbacks += 1
                 logger.error(
                     "model step failed for %s (fallback #%d): %s",
                     self.game_id,
                     self._fallbacks,
-                    describe_reply(self._adapter.last_response),
+                    describe_reply(core.last_response),
                     exc_info=self._fallbacks <= 2,
                 )
                 decision = fallback_decision(
                     tuple(latest_frame.available_actions), self._fallbacks
                 )
-                return action_mapper(decision)
+                core.note_move(
+                    self._adapter.observation(frames, latest_frame), decision
+                )
+                call, reply = _reply_fields(core.last_response)
+                return action_mapper(decision), {
+                    "src": "fallback",
+                    "move": core._move(decision),
+                    "call": call,
+                    "reply": reply,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
 
     SubmissionAgent.__name__ = "MyAgent"
     return SubmissionAgent
@@ -249,4 +356,25 @@ def agent_class_from_env(base: type) -> type:
         }
     )
     client = LoggingClient(OpenAICompatibleClient(inference))
-    return make_agent_class(base, limits=RunLimits.from_env(), client=client)
+    trace = None
+    if os.environ.get("ARC3_TRACE_DIR"):
+        trace = RunTrace(
+            Path(os.environ["ARC3_TRACE_DIR"]),
+            run_id=os.environ.get("ARC3_RUN_ID") or None,
+            keep_obs=os.environ.get("ARC3_TRACE_OBS") == "1",
+            settings={
+                "model": inference.model,
+                "thinking": inference.sampling.thinking,
+                "max_output_tokens": inference.max_output_tokens,
+                "request_timeout_seconds": inference.request_timeout_seconds,
+                "max_concurrent_calls": RunLimits.from_env().max_concurrent_calls,
+                "bundle_commit": os.environ.get("ARC3_BUNDLE_COMMIT", ""),
+            },
+        )
+    return make_agent_class(
+        base,
+        limits=RunLimits.from_env(),
+        client=client,
+        trace=trace,
+        use_ledger=os.environ.get("ARC3_LEDGER") == "1",
+    )

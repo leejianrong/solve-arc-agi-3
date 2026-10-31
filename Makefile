@@ -1,4 +1,4 @@
-.PHONY: help install lint type test check smoke
+.PHONY: help install lint type test check smoke e2e-viewer
 
 help:
 	@echo "install  - uv sync (dev group)"
@@ -7,6 +7,7 @@ help:
 	@echo "test     - pytest"
 	@echo "check    - lint + type + test"
 	@echo "smoke    - deterministic no-network baseline episode"
+	@echo "e2e-viewer - real-browser test of tools/replay (uv + Playwright)"
 
 install:
 	uv sync --group dev
@@ -25,3 +26,6 @@ check: lint type test
 
 smoke:
 	uv run solve-arc-agi-3 smoke
+
+e2e-viewer:
+	VIEWER_SHOTS=$${VIEWER_SHOTS:-/tmp/viewer-shots} uv run --no-project --with playwright python tools/replay/test_viewer.py

@@ -31,8 +31,16 @@ exclude = [
     "tests",
 ]
 
+[tool.pytest.ini_options]
+# tools/replay/test_viewer.py is a Playwright script run by `make e2e-viewer`, not a unit test.
+testpaths = ["tests"]
+
 [tool.ruff.lint]
 extend-select = ["I"]
+
+[tool.ruff.lint.per-file-ignores]
+# Notebook glue: a boot, probe or experiment step must log the failure and carry on, never die on it.
+"kaggle/**" = ["BLE001", "S110"]
 
 [tool.setuptools]
 packages = ["solve_arc_agi_3"]

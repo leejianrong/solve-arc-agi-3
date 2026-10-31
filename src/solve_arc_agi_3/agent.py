@@ -10,8 +10,9 @@ import json
 import re
 import struct
 import zlib
+from collections import Counter
 from collections.abc import Callable, Sequence
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -25,12 +26,18 @@ from .inference import (
     TextContentPart,
     ToolDefinition,
 )
+from .ledger import Ledger
 from .observation import (
+    MAX_COUNTER_CELLS,
     ascii_grid,
     change_boxes,
     changed_count,
     describe_change,
+    describe_key,
+    describe_motion,
     describe_objects,
+    object_motion,
+    region_key,
 )
 
 _ACTION_PATTERN = re.compile(r"\b(RESET|ACTION[1-7])\b", re.IGNORECASE)
@@ -300,6 +307,15 @@ def parse_action_decisions(
         if legal:
             return legal[:limit]
 
+    for call in re.finditer(r"action\((?:[^()]|\([^()]*\))*\)", response.content):
+        written = [
+            d
+            for d in _actions_from_python(call.group(0))
+            if d.action_id in available_actions
+        ]
+        if written:
+            return written[:limit]
+
     for match in reversed(list(_ACTION_PATTERN.finditer(response.content))):
         decision = ActionDecision(name=match.group(1).upper(), source="assistant_text")
         if decision.action_id not in available_actions:
@@ -375,8 +391,17 @@ class BaselineAgentCore:
     """
 
     def __init__(
-        self, client: InferenceClient, *, history_lines: int = HISTORY_LINES
+        self,
+        client: InferenceClient,
+        *,
+        history_lines: int = HISTORY_LINES,
+        use_ledger: bool = False,
+        ledger_chars: int = 1200,
     ) -> None:
+        self._use_ledger = use_ledger
+        self._ledger_chars = ledger_chars
+        self._ledger_records: list[dict[str, Any]] = []
+        self._pending_move: dict[str, object] = {}
         self._client = client
         self._history_lines = history_lines
         self._history: list[str] = []
@@ -393,16 +418,47 @@ class BaselineAgentCore:
         self.last_response: InferenceResponse | None = None
         self._nudge = False
         self._last_available: tuple[int, ...] = ()
-        self._box_streaks: dict[tuple[int, int, int, int], int] = {}
+        self._box_streaks: dict[tuple[object, ...], int] = {}
+        self._motions: dict[str, Counter[str]] = {}
+        self._since_call: list[str] = []
+        # What the last settled move did, for the trace writer (change, motion, counters, effects).
+        self.last_settled: dict[str, object] = {}
+        # Which move was just chosen and why, for the trace writer.
+        self.last_turn: dict[str, object] = {}
+        self.last_observation_text = ""
+        self._plan_full: list[ActionDecision] = []
+        self._plan_pos = 0
+        self._call_nudged = False
 
     def _counter_regions(self) -> list[str]:
-        """Small fixed regions that changed on each of the last 3+ actions: probably a counter or timer."""
+        """Small regions that changed on each of the last 3+ actions: probably a counter or timer."""
 
         return [
-            f"x{x0}-{x1} y{y0}-{y1}"
-            for (x0, y0, x1, y1), streak in sorted(self._box_streaks.items())
+            describe_key(key)
+            for key, streak in sorted(
+                self._box_streaks.items(), key=lambda kv: str(kv[0])
+            )
             if streak >= 3
         ]
+
+    @staticmethod
+    def _move(decision: ActionDecision) -> dict[str, object]:
+        move: dict[str, object] = {"name": decision.name}
+        if decision.data:
+            move.update(x=decision.data["x"], y=decision.data["y"])
+        return move
+
+    def settle(self, observation: Observation) -> None:
+        """Record the result of the last move now (idempotent; the next call would do it anyway)."""
+
+        self._settle_pending(observation)
+
+    def note_move(self, observation: Observation, decision: ActionDecision) -> None:
+        """Record a move the model did not choose (a reset or a fallback) so history and the trace include it."""
+
+        self._queue.clear()
+        self._previous = observation
+        self._note_pending(decision)
 
     def request_nudge(self) -> None:
         """Ask for the move properly on the next call (the last reply had no usable action)."""
@@ -419,29 +475,83 @@ class BaselineAgentCore:
         if self._pending is None or self._previous is None:
             return
         label, key = self._pending
-        change = describe_change(self._previous.grid, observation.grid)
+        before, after = self._previous.grid, observation.grid
+        change = describe_change(before, after)
         gained = observation.levels_completed - self._previous.levels_completed
-        changed = changed_count(self._previous.grid, observation.grid) != 0
-        streaks: dict[tuple[int, int, int, int], int] = {}
-        if changed_count(self._previous.grid, observation.grid) > 0:
-            for x0, y0, x1, y1, cells in change_boxes(
-                self._previous.grid, observation.grid
-            ):
-                if cells <= 16:
-                    streaks[(x0, y0, x1, y1)] = (
-                        self._box_streaks.get((x0, y0, x1, y1), 0) + 1
-                    )
-        self._box_streaks = streaks
+        raw = changed_count(before, after)
+        height = len(after)
+        width = len(after[0]) if height else 0
+        boxes = change_boxes(before, after) if raw > 0 else []
+        flagged = {k for k, streak in self._box_streaks.items() if streak >= 3}
+        keys = [region_key(box, width, height) for box in boxes]
+        small = {
+            k for k, box in zip(keys, boxes, strict=True) if box[4] <= MAX_COUNTER_CELLS
+        }
+        self._box_streaks = {k: self._box_streaks.get(k, 0) + 1 for k in small}
+        # A change confined to regions already flagged as counters does not count as the action doing anything.
+        changed = raw < 0 or any(k not in flagged for k in keys)
+        pairs = object_motion(before, after)
+        if pairs:
+            moved_from, moved_to = pairs[0]
+            kind = (
+                f"moves color {moved_from.color} size {moved_from.size} "
+                f"by ({moved_to.x0 - moved_from.x0:+d},{moved_to.y0 - moved_from.y0:+d})"
+            )
+            self._motions.setdefault(key, Counter())[kind] += 1
         tries = self._effects.setdefault(key, [0, 0])
         tries[0] += 1
         tries[1] += 1 if changed else 0
         self._noop_streak = 0 if changed else self._noop_streak + 1
         level = f"; LEVEL CLEARED (+{gained})" if gained > 0 else ""
-        self._last_change = f"{label}: {change}{level}"
-        self._history.append(
-            f"{self._steps}. {label} -> {observation.state}, {change[:150]}{level}"
+        note = (
+            " (only a counter or timer region changed)"
+            if raw > 0 and not changed
+            else ""
         )
+        moved = f"; motion: {describe_motion(pairs)}" if pairs else ""
+        self._last_change = f"{label}: {change}{note}{moved}{level}"
+        self._history.append(
+            f"{self._steps}. {label} -> {observation.state}, {change[:150]}{note}{level}"
+        )
+        self._since_call.append(f"{label}: {change[:110]}{note}{level}")
         del self._history[: -self._history_lines]
+        self.last_settled = {
+            "n": max(raw, 0),
+            "bbox": (
+                [
+                    min(b[0] for b in boxes),
+                    min(b[1] for b in boxes),
+                    max(b[2] for b in boxes),
+                    max(b[3] for b in boxes),
+                ]
+                if boxes
+                else None
+            ),
+            "regions": [list(b) for b in boxes[:6]],
+            "motion": [
+                {
+                    "color": a.color,
+                    "size": a.size,
+                    "from": list(a.center),
+                    "to": list(b.center),
+                }
+                for a, b in pairs
+            ],
+            "counters": self._counter_regions(),
+            "effects": {k: list(v) for k, v in self._effects.items()},
+        }
+        if self._use_ledger:
+            self._ledger_records.append(
+                {
+                    "kind": "step",
+                    "step": self._steps - 1,
+                    "moves": [self._pending_move],
+                    "levels": observation.levels_completed,
+                    "change": {"n": max(raw, 0)},
+                    "motion": self.last_settled["motion"],
+                    "counters": self.last_settled["counters"],
+                }
+            )
         self._pending = None
 
     def _effects_text(self) -> str:
@@ -450,10 +560,14 @@ class BaselineAgentCore:
         parts = []
         for key in sorted(self._effects):
             tries, changed = self._effects[key]
-            parts.append(
-                f"{key} changed the grid {changed}/{tries} times"
-                + (" (never changed anything)" if changed == 0 else "")
+            part = f"{key} changed the grid {changed}/{tries} times" + (
+                " (never changed anything)" if changed == 0 else ""
             )
+            seen = self._motions.get(key)
+            if seen:
+                text, n = seen.most_common(1)[0]
+                part += f"; {text} ({n}x)"
+            parts.append(part)
         return "; ".join(parts)
 
     def _observation_text(self, observation: Observation) -> str:
@@ -468,20 +582,54 @@ class BaselineAgentCore:
         )
         history = "\n".join(self._history[-12:]) or "(no actions yet)"
         reminder = ""
+        self._call_nudged = self._nudge
         if self._nudge:
             self._nudge = False
             reminder = self._nudge_text(names)
-        return (
+        text = (
             reminder
             + f"Game state: {observation.state}; levels completed {observation.levels_completed} of "
             f"{observation.win_levels}. Available actions: {names}.\n"
             f"Result of your last action: {self._last_change}.{warning}\n"
+            f"{self._plan_results()}"
             f"What each action has done so far: {self._effects_text()}\n"
+            f"{self._untried_line(observation)}"
+            f"{self._ledger_block()}"
             f"{self._counter_line()}"
             f"Recent steps:\n{history}\n\n"
             f"{describe_objects(observation.grid)}\n\n"
             f"Grid (rows top to bottom, x is the column, hex colours):\n{ascii_grid(observation.grid)}"
         )
+        self.last_observation_text = text
+        return text
+
+    def _ledger_block(self) -> str:
+        """What the moves so far show, as claims with evidence (computed from this game's own steps)."""
+
+        if not self._use_ledger or not self._ledger_records:
+            return ""
+        text = Ledger.from_trace(self._ledger_records).render(self._ledger_chars)
+        return f"Hypotheses so far, computed from your moves:\n{text}\n" if text else ""
+
+    def _plan_results(self) -> str:
+        """Move-by-move effects of the last multi-move plan (a single move is already in the line above)."""
+
+        if len(self._since_call) < 2:
+            return ""
+        lines = "\n".join(
+            f"  {i}) {text}" for i, text in enumerate(self._since_call, 1)
+        )
+        return f"Results of your last plan, move by move:\n{lines}\n"
+
+    def _untried_line(self, observation: Observation) -> str:
+        if not self._effects:
+            return ""
+        untried = [
+            f"ACTION{a}"
+            for a in observation.available_actions
+            if a != 0 and f"ACTION{a}" not in self._effects
+        ]
+        return f"Not tried yet in this game: {', '.join(untried)}.\n" if untried else ""
 
     def _counter_line(self) -> str:
         regions = self._counter_regions()
@@ -547,10 +695,19 @@ class BaselineAgentCore:
             return None
         self._previous = observation
         self._note_pending(decision)
+        self._plan_pos += 1
+        self.last_turn = {
+            "src": "queued",
+            "move": self._move(decision),
+            "plan": [self._move(d) for d in self._plan_full],
+            "plan_idx": self._plan_pos,
+            "nudge": False,
+        }
         return decision
 
     def _note_pending(self, decision: ActionDecision) -> None:
         self._steps += 1
+        self._pending_move = self._move(decision)
         coords = (
             f" at x={decision.data['x']},y={decision.data['y']}"
             if decision.data
@@ -575,6 +732,7 @@ class BaselineAgentCore:
         content_parts: list[TextContentPart | ImageContentPart] = [
             TextContentPart(text=self._observation_text(observation))
         ]
+        self._since_call = []
         image_url = grid_png_data_url(observation.grid)
         if image_url is not None:
             content_parts.append(
@@ -609,6 +767,14 @@ class BaselineAgentCore:
         self._queue = decisions[1:]
         self._plan_levels = observation.levels_completed
         self._note_pending(decisions[0])
+        self._plan_full, self._plan_pos = decisions, 0
+        self.last_turn = {
+            "src": "model",
+            "move": self._move(decisions[0]),
+            "plan": [self._move(d) for d in decisions],
+            "plan_idx": 0,
+            "nudge": self._call_nudged,
+        }
         return decisions[0]
 
     def choose(self, observation: Observation) -> AgentTurn:
@@ -665,7 +831,11 @@ class OfficialAgentAdapter:
         self._core = core
         self._action_mapper = action_mapper
 
-    def choose_action(self, frames: list[FrameLike], latest_frame: FrameLike) -> object:
+    def observation(
+        self, frames: list[FrameLike], latest_frame: FrameLike
+    ) -> Observation:
+        """The model-facing view of the latest frame (falls back to the last non-empty grid)."""
+
         source_frame = latest_frame
         if not _normalize_grid(latest_frame.frame):
             for previous in reversed(frames):
@@ -680,6 +850,10 @@ class OfficialAgentAdapter:
                 "win_levels": latest_frame.win_levels,
             }
         )
+        return observation
+
+    def choose_action(self, frames: list[FrameLike], latest_frame: FrameLike) -> object:
+        observation = self.observation(frames, latest_frame)
         queued = self._core.queued_decision(observation)
         if queued is not None:
             return self._action_mapper(queued)
@@ -688,6 +862,10 @@ class OfficialAgentAdapter:
     @property
     def last_response(self) -> InferenceResponse | None:
         return self._core.last_response
+
+    @property
+    def core(self) -> BaselineAgentCore:
+        return self._core
 
     def request_nudge(self) -> None:
         self._core.request_nudge()

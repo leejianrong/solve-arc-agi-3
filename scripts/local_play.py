@@ -23,11 +23,17 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from arc_agi import Arcade, OperationMode
-from arcengine import GameAction
 
 from solve_arc_agi_3.baseline_config import InferenceConfig
 from solve_arc_agi_3.inference import OpenAICompatibleClient
 from solve_arc_agi_3.kaggle_agent import LoggingClient, RunLimits, make_agent_class
+from solve_arc_agi_3.step_trace import (
+    RunTrace,
+    apply_diff,
+    decode_rows,
+    finish_run_dir,
+    grid_rows,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ENV_DIR = ROOT.parent / "play-arc-agi-3" / "environment_files"
@@ -109,13 +115,20 @@ def to_frame(raw) -> Frame:
 
 
 def play(
-    game_id: str, arc: Arcade, card: str, agent_cls: type, steps: int, results: dict
+    game_id: str,
+    arc: Arcade,
+    card: str,
+    agent_cls: type,
+    steps: int,
+    results: dict,
+    truths: dict,
 ) -> None:
     env = arc.make(game_id, scorecard_id=card)
     agent = agent_cls(game_id)
     frames = [to_frame(env.observation_space)]
     best = 0
     actions: dict[str, int] = {}
+    truth = [grid_rows(tuple(map(tuple, frames[0].frame[-1])))]
     for _ in range(steps):
         latest = frames[-1]
         if str(getattr(latest.state, "value", latest.state)) == "WIN":
@@ -126,7 +139,12 @@ def play(
         if raw is None:
             break
         frames.append(to_frame(raw))
+        truth.append(grid_rows(tuple(map(tuple, frames[-1].frame[-1]))))
         best = max(best, raw.levels_completed)
+    agent.is_done(
+        frames, frames[-1]
+    )  # as the official loop does; writes the last trace record
+    truths[game_id] = truth
     results[game_id] = {
         "levels": best,
         "of": frames[-1].win_levels,
@@ -134,6 +152,33 @@ def play(
         "steps": len(frames) - 1,
         "actions": actions,
     }
+
+
+def verify_trace(run_dir: Path, truths: dict) -> None:
+    """Decode each game's trace and compare it with the board the game really showed at every step."""
+
+    steps = 0
+    for game, truth in truths.items():
+        records = [
+            json.loads(x) for x in (run_dir / f"{game}.jsonl").read_text().splitlines()
+        ]
+        rows = decode_rows(records[0]["frame"]["base"])
+        assert rows == truth[0], f"{game}: start frame differs"
+        for i, rec in enumerate(r for r in records if r["kind"] == "step"):
+            frame = rec["frame"]
+            rows = (
+                decode_rows(frame["key"])
+                if "key" in frame
+                else apply_diff(rows, frame["diff"])
+            )
+            assert rows == truth[i + 1], f"{game}: step {i} differs"
+            steps += 1
+        assert steps and len(records) - 1 == len(truth) - 1, (
+            f"{game}: {len(records) - 1} records for {len(truth) - 1} steps"
+        )
+    print(
+        f"TRACE_REPLAY exact: {len(truths)} games, {steps} steps decoded and compared with the real boards"
+    )
 
 
 def main() -> None:
@@ -158,6 +203,11 @@ def main() -> None:
         help="scripted random plans instead of a model (free)",
     )
     ap.add_argument("--seed", type=int, default=0, help="seed for --fake")
+    ap.add_argument(
+        "--trace-dir",
+        type=Path,
+        help="write a step trace here and verify it replays exactly",
+    )
     args = ap.parse_args()
 
     logging.basicConfig(
@@ -180,7 +230,12 @@ def main() -> None:
     limits = RunLimits(
         deadline_epoch=time.time() + 3600, max_concurrent_calls=args.concurrency
     )
-    agent_cls = make_agent_class(Base, limits=limits, client=client)
+    trace = (
+        RunTrace(args.trace_dir, settings={"fake": args.fake})
+        if args.trace_dir
+        else None
+    )
+    agent_cls = make_agent_class(Base, limits=limits, client=client, trace=trace)
 
     arc = Arcade(
         operation_mode=OperationMode.OFFLINE,
@@ -197,9 +252,10 @@ def main() -> None:
     )
     card = arc.open_scorecard(tags=["local"])
     results: dict = {}
+    truths: dict = {}
     threads = [
         threading.Thread(
-            target=play, args=(g, arc, card, agent_cls, args.steps, results)
+            target=play, args=(g, arc, card, agent_cls, args.steps, results, truths)
         )
         for g in ids
     ]
@@ -207,13 +263,34 @@ def main() -> None:
     [t.start() for t in threads]
     [t.join() for t in threads]
     scorecard = arc.close_scorecard(card)
+    if trace is not None:
+        dump = scorecard.model_dump() if scorecard else None
+        baselines = {
+            env["id"]: run["level_baseline_actions"]
+            for env in (dump or {}).get("environments", [])
+            for run in env.get("runs", [])[:1]
+        }
+        finish_run_dir(trace.run_dir, dump, baselines)
+        verify_trace(trace.run_dir, truths)
     print(json.dumps(results, indent=1))
     if scorecard is not None:
         for env in scorecard.model_dump().get("environments", []):
             for run in env.get("runs", []):
                 if run.get("levels_completed"):
-                    print("SCORED", env["id"], "levels", run["levels_completed"], "actions", run["actions"], "level_scores", run["level_scores"],
-                          "level_actions", run["level_actions"], "baseline", run["level_baseline_actions"])
+                    print(
+                        "SCORED",
+                        env["id"],
+                        "levels",
+                        run["levels_completed"],
+                        "actions",
+                        run["actions"],
+                        "level_scores",
+                        run["level_scores"],
+                        "level_actions",
+                        run["level_actions"],
+                        "baseline",
+                        run["level_baseline_actions"],
+                    )
     print(
         f"games={len(ids)} levels_total={sum(r['levels'] for r in results.values())} "
         f"fallbacks={sum(r['fallbacks'] for r in results.values())} steps={sum(r['steps'] for r in results.values())} "
