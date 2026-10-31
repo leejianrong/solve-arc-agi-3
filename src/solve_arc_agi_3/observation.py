@@ -13,7 +13,7 @@ from dataclasses import dataclass
 Grid = tuple[tuple[int, ...], ...]
 
 _HEX = "0123456789abcdef"
-MAX_OBJECTS = 40
+MAX_OBJECTS = 60
 MAX_CHANGE_REGIONS = 5
 
 
@@ -152,3 +152,20 @@ def describe_change(before: Grid | None, after: Grid) -> str:
         else ""
     )
     return f"{count} cells changed: " + "; ".join(parts) + more
+
+
+def change_boxes(before: Grid, after: Grid) -> list[tuple[int, int, int, int, int]]:
+    """Bounding boxes (x0, y0, x1, y1, cells) of each connected region that differs, largest first."""
+
+    if changed_count(before, after) <= 0:
+        return []
+
+    def differs(x: int, y: int) -> bool:
+        return before[y][x] != after[y][x]
+
+    boxes = []
+    for cells, _ in _components(after, differs, by_color=False):
+        xs = [c[0] for c in cells]
+        ys = [c[1] for c in cells]
+        boxes.append((min(xs), min(ys), max(xs), max(ys), len(cells)))
+    return sorted(boxes, key=lambda b: -b[4])

@@ -27,6 +27,7 @@ from .inference import (
 )
 from .observation import (
     ascii_grid,
+    change_boxes,
     changed_count,
     describe_change,
     describe_objects,
@@ -391,6 +392,17 @@ class BaselineAgentCore:
         self._steps = 0
         self.last_response: InferenceResponse | None = None
         self._nudge = False
+        self._last_available: tuple[int, ...] = ()
+        self._box_streaks: dict[tuple[int, int, int, int], int] = {}
+
+    def _counter_regions(self) -> list[str]:
+        """Small fixed regions that changed on each of the last 3+ actions: probably a counter or timer."""
+
+        return [
+            f"x{x0}-{x1} y{y0}-{y1}"
+            for (x0, y0, x1, y1), streak in sorted(self._box_streaks.items())
+            if streak >= 3
+        ]
 
     def request_nudge(self) -> None:
         """Ask for the move properly on the next call (the last reply had no usable action)."""
@@ -410,6 +422,16 @@ class BaselineAgentCore:
         change = describe_change(self._previous.grid, observation.grid)
         gained = observation.levels_completed - self._previous.levels_completed
         changed = changed_count(self._previous.grid, observation.grid) != 0
+        streaks: dict[tuple[int, int, int, int], int] = {}
+        if changed_count(self._previous.grid, observation.grid) > 0:
+            for x0, y0, x1, y1, cells in change_boxes(
+                self._previous.grid, observation.grid
+            ):
+                if cells <= 16:
+                    streaks[(x0, y0, x1, y1)] = (
+                        self._box_streaks.get((x0, y0, x1, y1), 0) + 1
+                    )
+        self._box_streaks = streaks
         tries = self._effects.setdefault(key, [0, 0])
         tries[0] += 1
         tries[1] += 1 if changed else 0
@@ -448,19 +470,61 @@ class BaselineAgentCore:
         reminder = ""
         if self._nudge:
             self._nudge = False
-            reminder = (
-                "Your previous reply contained no action. Reply now with only the python tool call, "
-                "for example action([1]).\n"
-            )
+            reminder = self._nudge_text(names)
         return (
             reminder
             + f"Game state: {observation.state}; levels completed {observation.levels_completed} of "
             f"{observation.win_levels}. Available actions: {names}.\n"
             f"Result of your last action: {self._last_change}.{warning}\n"
             f"What each action has done so far: {self._effects_text()}\n"
+            f"{self._counter_line()}"
             f"Recent steps:\n{history}\n\n"
             f"{describe_objects(observation.grid)}\n\n"
             f"Grid (rows top to bottom, x is the column, hex colours):\n{ascii_grid(observation.grid)}"
+        )
+
+    def _counter_line(self) -> str:
+        regions = self._counter_regions()
+        if not regions:
+            return ""
+        return (
+            "Regions that changed on every recent action (probably a step counter or timer, not part of the "
+            f"puzzle): {', '.join(regions)}\n"
+        )
+
+    def _nudge_text(self, available_names: str) -> str:
+        """Why the last reply was unusable, as specifically as we can tell."""
+
+        response = self.last_response
+        illegal: list[str] = []
+        click_without_coordinates = False
+        if response is not None:
+            for call in response.tool_calls:
+                try:
+                    code = json.loads(call.function.arguments).get("code", "")
+                except (json.JSONDecodeError, AttributeError):
+                    continue
+                if not isinstance(code, str):
+                    continue
+                for decision in _actions_from_python(code):
+                    if decision.action_id not in self._last_available:
+                        illegal.append(decision.name)
+                if re.search(r"\bACTION6\b|\b6\b", code) and "x" not in code.lower():
+                    click_without_coordinates = True
+        if illegal:
+            return (
+                f"Your previous reply used {', '.join(sorted(set(illegal)))}, which is not available now "
+                f"(available: {available_names}). Reply with only the python tool call, using an available "
+                "action.\n"
+            )
+        if click_without_coordinates:
+            return (
+                "Your previous click had no coordinates. A click needs x (column) and y (row), for example "
+                'action([{"action": 6, "x": 12, "y": 30}]). Reply with only the python tool call.\n'
+            )
+        return (
+            "Your previous reply contained no action. Reply now with only the python tool call, "
+            "for example action([1]).\n"
         )
 
     def queued_decision(self, observation: Observation) -> ActionDecision | None:
@@ -507,6 +571,7 @@ class BaselineAgentCore:
 
         self._settle_pending(observation)
         self._queue.clear()
+        self._last_available = observation.available_actions
         content_parts: list[TextContentPart | ImageContentPart] = [
             TextContentPart(text=self._observation_text(observation))
         ]
