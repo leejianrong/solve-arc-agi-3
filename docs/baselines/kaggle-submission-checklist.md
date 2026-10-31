@@ -83,3 +83,19 @@ real gateway has not been exercised yet; only a real submission does that.
 - **Daily limit: one submission per day** (the CLI reported "0 submissions remaining today" right after this one).
   Deadline 2026-11-02 23:59, so at most the slots of Oct 31, Nov 1 and Nov 2, and a nine-hour run must start early enough.
 - Expected score is near 0; the goal of this submission is to exercise the real gateway path.
+
+## How the score works, and the random floor (measured locally, 2026-10-31)
+
+Read off the official scorecard of offline runs on the 24 public games (`scripts/local_play.py --fake`, a free scripted
+client that plays random 1 to 4 move plans):
+
+- **Level score = 100 x (baseline_actions / actions_used)^2**, capped at 100. For `sp80` level 1 (baseline 39): 43 actions
+  scored 82.26, 46 scored 71.88, 82 scored 22.62, 134 scored 8.47. Actions used on the level include every wasted move.
+- **Game score = mean of level scores weighted by level number** (level i has weight i). One cleared level 1 in a 6-level
+  game is worth 100 x 1/21 = 4.8 at most. Overall score = mean over games.
+- **Random-plan floor** (24 games, 150 to 200 steps each, 6 runs): 0.163, 0.143, 0.020, 0.0, 0.017, 0.056, mean about 0.067.
+  Nearly all of it is luck on `sp80`, `vc33` and `ft09` level 1. Our submitted baseline (submission 57788190) scored 0.00.
+
+Consequence: wall time is not the scarce resource, actions are. A model that thinks for a minute and then clears level 1 in
+about the human baseline scores more than a fast one that flails. Next experiment: thinking ON with a large token budget
+(kernel `leejianrong/arc3-duck-qwen-dev-think`), against thinking OFF (kernel `leejianrong/arc3-duck-qwen`).
