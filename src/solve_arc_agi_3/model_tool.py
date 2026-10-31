@@ -92,6 +92,9 @@ class _Recorder:
         self.steps = steps
         self.calls = 0
         self.first: tuple[int, SandboxError] | None = None
+        self.last_error: SandboxError | None = (
+            None  # read by verify_replay, which then stops early
+        )
 
     def predict(self, frame: Grid, move: Move) -> Grid:
         step = self.steps[self.calls] if self.calls < len(self.steps) else -1
@@ -99,6 +102,7 @@ class _Recorder:
         self.model.last_error = None
         out = self.model.predict(frame, move)
         err = self.model.last_error
+        self.last_error = err
         if err is not None and self.first is None:
             self.first = (step, err)
         return out

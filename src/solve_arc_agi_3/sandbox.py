@@ -37,9 +37,9 @@ import time
 import weakref
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Any, Literal, Self
+from typing import Any, Literal, NoReturn, Self
 
-from solve_arc_agi_3.world_model import Grid, Move
+from solve_arc_agi_3.world_model import Grid, Move, frame_to_rows, rows_to_frame
 
 ErrorKind = Literal["timeout", "crash", "exception", "bad_output", "forbidden"]
 
@@ -82,6 +82,7 @@ _WORKER = r"""
 import ast, json, os, resource, sys, types
 
 MAX_PRINT = 65536
+MAX_MOVES = 256
 FORBIDDEN_NAMES = {
     "open", "eval", "exec", "compile", "globals", "locals", "vars", "getattr", "setattr", "delattr",
     "input", "breakpoint", "exit", "quit", "help", "memoryview", "type", "dir", "id",
@@ -233,6 +234,19 @@ def main():
             return False
         return all(isinstance(r, str) and len(r) == width and all(c in HEX for c in r) for r in out)
 
+    def valid_moves(out):
+        if not isinstance(out, (list, tuple)) or len(out) > MAX_MOVES:
+            return False
+        for m in out:
+            if not isinstance(m, dict) or not isinstance(m.get("name"), str):
+                return False
+            for k in ("x", "y"):
+                if k in m and (type(m[k]) is not int):
+                    return False
+            if set(m) - {"name", "x", "y"}:
+                return False
+        return True
+
     predict = glb["predict"]
     while True:
         line = rin.readline()
@@ -247,11 +261,32 @@ def main():
         printed[0] = 0
         frame = req["frame"]
         try:
-            out = predict(frame, req["move"])
-            if not valid(out, len(frame), len(frame[0]) if frame else 0):
-                send({"ok": False, "kind": "bad_output", "message": "result is not a frame of the input shape: " + repr(out)[:150]})
+            if req["op"] == "is_goal":
+                fn = glb.get("is_goal")
+                if not callable(fn):
+                    send({"ok": False, "kind": "exception", "message": "source does not define is_goal"})
+                    continue
+                out = fn(frame)
+                if isinstance(out, bool):
+                    send({"ok": True, "value": out})
+                else:
+                    send({"ok": False, "kind": "bad_output", "message": "is_goal did not return a bool: " + repr(out)[:100]})
+            elif req["op"] == "legal_moves":
+                fn = glb.get("legal_moves")
+                if not callable(fn):
+                    send({"ok": False, "kind": "exception", "message": "source does not define legal_moves"})
+                    continue
+                out = fn(frame)
+                if valid_moves(out):
+                    send({"ok": True, "moves": [dict(m) for m in out]})
+                else:
+                    send({"ok": False, "kind": "bad_output", "message": "legal_moves did not return a list of move dicts: " + repr(out)[:100]})
             else:
-                send({"ok": True, "frame": list(out)})
+                out = predict(frame, req["move"])
+                if not valid(out, len(frame), len(frame[0]) if frame else 0):
+                    send({"ok": False, "kind": "bad_output", "message": "result is not a frame of the input shape: " + repr(out)[:150]})
+                else:
+                    send({"ok": True, "frame": list(out)})
         except Forbidden as e:
             send({"ok": False, "kind": "forbidden", "message": str(e)})
         except TooMuchOutput:
@@ -280,12 +315,25 @@ def _cut(text: str) -> str:
     return text if len(text) <= MAX_MESSAGE else text[:MAX_MESSAGE]
 
 
-def _encode(grid: Grid) -> list[str]:
-    return ["".join("0123456789abcdef"[c] for c in row) for row in grid]
+_encode = frame_to_rows
+_decode = rows_to_frame
 
 
-def _decode(rows: list[str]) -> Grid:
-    return tuple(tuple(int(c, 16) for c in row) for row in rows)
+def _defined_functions(source: str) -> frozenset[str]:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return frozenset()
+    return frozenset(n.name for n in tree.body if isinstance(n, ast.FunctionDef))
+
+
+def _move_dict(move: Move) -> dict[str, Any]:
+    out: dict[str, Any] = {"name": move.name}
+    if move.x is not None:
+        out["x"] = move.x
+    if move.y is not None:
+        out["y"] = move.y
+    return out
 
 
 class _Fail(Exception):
@@ -311,6 +359,9 @@ class SandboxedModel:
         self.source = source
         self.timeout = min(max(timeout, 0.05), HARD_TIMEOUT)
         self.last_error: SandboxError | None = None
+        defined = _defined_functions(source)
+        self.has_is_goal = "is_goal" in defined
+        self.has_legal_moves = "legal_moves" in defined
         self.restarts = 0
         self._limits = {
             "memory": memory_mb << 20,
@@ -344,13 +395,8 @@ class SandboxedModel:
         if self._broken is not None:
             return self._broken
         try:
-            request: dict[str, Any] = {"name": move.name}
-            if move.x is not None:
-                request["x"] = move.x
-            if move.y is not None:
-                request["y"] = move.y
             reply = self._request(
-                {"op": "predict", "frame": _encode(frame), "move": request}
+                {"op": "predict", "frame": _encode(frame), "move": _move_dict(move)}
             )
             return self._decode_reply(reply, frame)
         except _Fail as fail:
@@ -367,6 +413,52 @@ class SandboxedModel:
             self.last_error = result
             return _EMPTY
         return result
+
+    def is_goal(self, frame: Grid) -> bool:
+        """The source's optional `is_goal(frame) -> bool`. False when it is not defined or fails (the
+        failure is recorded in `last_error`)."""
+        reply = self._optional_op("is_goal", self.has_is_goal, frame)
+        if isinstance(reply, SandboxError):
+            self.last_error = reply
+            return False
+        return reply["value"] is True
+
+    def legal_moves(self, frame: Grid) -> list[Move]:
+        """The source's optional `legal_moves(frame) -> list[dict]`. Empty when it is not defined or
+        fails (the failure is recorded in `last_error`)."""
+        reply = self._optional_op("legal_moves", self.has_legal_moves, frame)
+        if isinstance(reply, SandboxError):
+            self.last_error = reply
+            return []
+        return [Move(m["name"], m.get("x"), m.get("y")) for m in reply["moves"]]
+
+    def _optional_op(
+        self, op: str, defined: bool, frame: Grid
+    ) -> dict[str, Any] | SandboxError:
+        if self._broken is not None:
+            return self._broken
+        if not defined:
+            return SandboxError("exception", f"source does not define {op}")
+        try:
+            reply = self._request({"op": op, "frame": _encode(frame)})
+            if reply.get("ok") is True:
+                good = (
+                    isinstance(reply.get("value"), bool)
+                    if op == "is_goal"
+                    else isinstance(reply.get("moves"), list)
+                )
+                if good:
+                    return reply
+                raise _Fail(SandboxError("bad_output", "malformed reply"), kill=True)
+            self._raise_error(reply)
+        except _Fail as fail:
+            if fail.kill:
+                self._kill()
+            return fail.error
+        except Exception as exc:  # noqa: BLE001  never raise into the caller
+            self._kill()
+            return SandboxError("crash", _cut(f"{type(exc).__name__}: {exc}"))
+        raise AssertionError("unreachable")  # pragma: no cover
 
     def limits(self) -> dict[str, Any]:
         """Debug call: the worker's own rlimits, environment and working directory."""
@@ -414,6 +506,9 @@ class SandboxedModel:
                 except ValueError:
                     pass
             raise _Fail(SandboxError("bad_output", "malformed reply"), kill=True)
+        self._raise_error(reply)
+
+    def _raise_error(self, reply: dict[str, Any]) -> NoReturn:
         kind = reply.get("kind")
         message = _cut(str(reply.get("message", "")))
         if kind not in ("exception", "bad_output", "forbidden", "crash"):

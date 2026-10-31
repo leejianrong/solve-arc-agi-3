@@ -198,3 +198,16 @@ def test_second_revision_closes_first_model() -> None:
 def test_message_is_capped() -> None:
     msg = reject("def predict(frame, move):\n    raise ValueError('x' * 5000)\n")
     assert len(msg) <= MAX_MESSAGE
+
+
+def test_looping_model_is_rejected_after_one_timeout() -> None:
+    src = "def predict(frame, move):\n    while True:\n        pass\n"
+    start = time.monotonic()
+    result = submit_world_model(RevisionLog("g"), src, records(4), timeout=0.5)
+    assert (
+        time.monotonic() - start < 3.0
+    )  # eight timeouts would be 3.2s of waiting alone
+    assert not result.accepted and result.report is not None
+    assert result.report.stopped_early and result.report.checked == 1
+    assert result.report.first_error.startswith("step 0: timeout")
+    assert "timeout at step 0" in result.reason

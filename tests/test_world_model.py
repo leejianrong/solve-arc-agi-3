@@ -11,6 +11,8 @@ from solve_arc_agi_3.world_model import (
     decode_frame,
     decode_trace_frame,
     encode_frame,
+    frame_to_rows,
+    rows_to_frame,
     transitions_from_trace,
     verify_replay,
 )
@@ -165,3 +167,45 @@ def test_revision_accept_reject_and_rollback() -> None:
     assert log.active == good and len(log.rejected) == 2 and worse.parent == 2
     third, _ = log.submit("v4", Shift(1), ts)
     assert log.active == third and third.parent == 2 and third.revision == 4
+
+
+def test_decode_frame_rejects_plain_hex_rows_with_a_clear_error() -> None:
+    for bad in (["0000000000000000"], ["f" * 70], ["zz1"], ["a0"]):
+        with pytest.raises(ValueError, match="run-length") as info:
+            decode_frame(bad)
+        assert "rows_to_frame" in str(info.value)
+    with pytest.raises(ValueError, match="run-length"):
+        decode_frame(["1" * 5000 + "1"])  # one huge run that used to overflow
+
+
+def test_rows_to_frame_and_back_are_plain_hex_not_run_length() -> None:
+    g = grid_with((1, 1, 15))
+    rows = frame_to_rows(g)
+    assert rows[1] == "0f000000" and len(rows) == 8
+    assert rows_to_frame(rows) == g
+    assert decode_frame(encode_frame(g)) == g != rows_to_frame(["0f"])
+
+
+class Failing:
+    """Looks like a SandboxedModel to verify_replay: an empty frame and a `last_error`."""
+
+    def __init__(self) -> None:
+        self.last_error: object = None
+        self.calls = 0
+
+    def predict(self, frame: Grid, move: Move) -> Grid:
+        self.calls += 1
+        self.last_error = "timeout: no reply within 2s"
+        return ()
+
+
+def test_sandbox_error_is_surfaced_and_replay_stops_early() -> None:
+    model = Failing()
+    report = verify_replay(model, shifts(5))
+    assert not report.exact and report.stopped_early
+    assert model.calls == 1 and report.checked == 1
+    assert report.first_error == "step 0: timeout: no reply within 2s"
+    assert "timeout" in report.summary
+    # a healthy model still checks everything
+    full = verify_replay(Shift(1), shifts(5))
+    assert full.checked == 5 and not full.stopped_early

@@ -8,6 +8,7 @@ in docs/TRACE.md.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -39,6 +40,12 @@ class Transition:
 
 class WorldModel(Protocol):
     def predict(self, frame: Grid, move: Move) -> Grid: ...
+
+
+class GoalModel(WorldModel, Protocol):
+    """A world model that can also say whether a frame is a goal state (ADR-0013)."""
+
+    def is_goal(self, frame: Grid) -> bool: ...
 
 
 class ModelSpec(BaseModel):
@@ -79,6 +86,20 @@ def _encode_row(row: Sequence[int]) -> str:
     return ".".join(tokens)
 
 
+_MAX_ROW = 4096
+_TOKEN = re.compile(r"[0-9a-f][0-9]{1,4}")
+
+
+def rows_to_frame(rows: Sequence[str]) -> Grid:
+    """Plain hex rows (one hex digit per cell, `"0030"`), as model-written code sees frames, to a Grid."""
+    return tuple(tuple(int(c, 16) for c in row) for row in rows)
+
+
+def frame_to_rows(grid: Grid) -> list[str]:
+    """A Grid to plain hex rows; the inverse of `rows_to_frame`. Not the run-length trace encoding."""
+    return ["".join(_HEX[c] for c in row) for row in grid]
+
+
 def decode_frame(encoded: Sequence[str]) -> Grid:
     """Decode run-length rows. `~n` repeats the previous row n more times, whether it is written after the
     row string (`51.363~2`) or as an item of its own (`~2`)."""
@@ -97,8 +118,19 @@ def decode_frame(encoded: Sequence[str]) -> Grid:
 def _decode_row(text: str) -> tuple[int, ...]:
     cells: list[int] = []
     for token in text.split("."):
+        if not _TOKEN.fullmatch(token) or int(token[1:]) == 0:
+            raise ValueError(_BAD_ROW.format(row=text[:40]))
         cells.extend([_HEX.index(token[0])] * int(token[1:]))
+        if len(cells) > _MAX_ROW:
+            raise ValueError(_BAD_ROW.format(row=text[:40]))
     return tuple(cells)
+
+
+_BAD_ROW = (
+    "row {row!r} is not run-length encoded. decode_frame takes the trace encoding (hex colour then run "
+    "length, joined by '.', e.g. '51.363' for one 5 and 63 threes, '~n' repeats a row); plain hex rows "
+    "such as '0030' are a different encoding, use rows_to_frame"
+)
 
 
 def apply_diff(previous: Grid, runs: Iterable[Sequence[int]]) -> Grid:
@@ -153,13 +185,19 @@ def transitions_from_trace(records: Iterable[Mapping[str, Any]]) -> list[Transit
 class ReplayReport:
     """exact means every predicted frame equals the observed one cell for cell. Each step is predicted from
     the observed frame before it, so one early error does not hide later ones. A prediction that raises or
-    has the wrong shape counts as a mismatch of every cell of the larger frame."""
+    has the wrong shape counts as a mismatch of every cell of the larger frame.
+
+    A model that reports a sandbox error (an object with a `last_error` attribute, as `SandboxedModel`
+    has) is rejected at the first such failure: `first_error` names it as `step N: kind: message`,
+    `stopped_early` is true and `checked` counts the steps actually run, so a looping model costs one
+    timeout, not one per step."""
 
     exact: bool
     checked: int
     mismatching_steps: tuple[int, ...] = field(default=())
     mismatch_cells: int = 0
     first_error: str = ""
+    stopped_early: bool = False
 
     @property
     def first_mismatch(self) -> int | None:
@@ -192,16 +230,31 @@ def verify_replay(model: WorldModel, transitions: Sequence[Transition]) -> Repla
     wrong: list[int] = []
     cells = 0
     first_error = ""
+    checked = 0
+    stopped = False
+    reports_errors = hasattr(model, "last_error")
     for t in transitions:
+        checked += 1
+        if reports_errors:
+            model.last_error = None  # type: ignore[attr-defined]
+        sandbox_error = None
         try:
             diff = _cell_diff(model.predict(t.before, t.move), t.after)
+            if reports_errors:
+                sandbox_error = model.last_error  # type: ignore[attr-defined]
         except Exception as exc:  # noqa: BLE001  untrusted model code: any failure is a mismatch
             diff = sum(map(len, t.after))
             first_error = first_error or f"step {t.step}: {type(exc).__name__}: {exc}"
+        if sandbox_error is not None:
+            diff = diff or sum(map(len, t.after))
+            first_error = first_error or f"step {t.step}: {sandbox_error}"
+            stopped = True
         if diff:
             wrong.append(t.step)
             cells += diff
-    return ReplayReport(not wrong, len(transitions), tuple(wrong), cells, first_error)
+        if stopped:
+            break
+    return ReplayReport(not wrong, checked, tuple(wrong), cells, first_error, stopped)
 
 
 class RevisionLog:

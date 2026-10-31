@@ -257,3 +257,59 @@ def test_a_module_that_is_not_on_the_list_cannot_be_imported() -> None:
     with SandboxedModel(source, timeout=2.0) as model:
         result = model.call(((0,),), Move(name="ACTION1"))
     assert isinstance(result, SandboxError) and result.kind == "forbidden"
+
+
+def test_replay_reports_the_sandbox_error_and_stops_after_one_timeout(make) -> None:  # type: ignore[no-untyped-def]
+    model = make(
+        "def predict(frame, move):\n    while True:\n        pass\n", timeout=0.3
+    )
+    ts = [Transition(i, FRAME, MOVE, FRAME, 0, 0, "NOT_FINISHED") for i in range(20)]
+    start = time.monotonic()
+    report = verify_replay(model, ts)
+    assert time.monotonic() - start < 3.0  # twenty timeouts would be 6s
+    assert report.stopped_early and report.checked == 1
+    assert report.first_error.startswith("step 0: timeout")
+
+
+GOAL_SRC = """
+def predict(frame, move):
+    return frame
+
+def is_goal(frame):
+    return frame[3][1] == "7"
+
+def legal_moves(frame):
+    return [{"name": "ACTION1"}, {"name": "ACTION6", "x": 2, "y": 3}]
+"""
+
+
+def test_optional_is_goal_and_legal_moves(make) -> None:  # type: ignore[no-untyped-def]
+    m = make(GOAL_SRC)
+    assert m.has_is_goal and m.has_legal_moves
+    assert m.is_goal(grid(1)) is True and m.is_goal(grid(2)) is False
+    assert m.legal_moves(FRAME) == [Move("ACTION1"), Move("ACTION6", 2, 3)]
+    assert m.last_error is None
+    assert m.predict(FRAME, MOVE) == FRAME  # predict still works on the same worker
+
+
+def test_undefined_or_bad_optional_functions_are_typed_errors(make) -> None:  # type: ignore[no-untyped-def]
+    plain = make(SHIFT)
+    assert not plain.has_is_goal and plain.is_goal(FRAME) is False
+    assert plain.last_error is not None and "is_goal" in plain.last_error.message
+    assert plain.legal_moves(FRAME) == []
+    bad = make(
+        "def predict(frame, move):\n    return frame\n"
+        "def is_goal(frame):\n    return 1\n"
+        "def legal_moves(frame):\n    return [{'name': 3}]\n"
+    )
+    assert bad.is_goal(FRAME) is False and bad.last_error is not None
+    assert bad.last_error.kind == "bad_output"
+    assert bad.legal_moves(FRAME) == [] and bad.last_error.kind == "bad_output"
+    loops = make(
+        "def predict(frame, move):\n    return frame\n"
+        "def is_goal(frame):\n    while True:\n        pass\n",
+        timeout=0.3,
+    )
+    assert loops.is_goal(FRAME) is False and loops.last_error is not None
+    assert loops.last_error.kind == "timeout"
+    assert loops.predict(FRAME, MOVE) == FRAME  # worker was replaced
