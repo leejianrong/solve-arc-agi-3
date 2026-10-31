@@ -34,6 +34,7 @@ from .observation import (
     ascii_grid,
     change_boxes,
     changed_count,
+    counter_strips,
     describe_change,
     describe_key,
     describe_motion,
@@ -554,6 +555,9 @@ class BaselineAgentCore:
         self._mover: Region | None = None  # last object seen moving
         self._move_status = ""
         self._ignored_calls = 0  # extra parallel tool calls dropped from the last reply
+        self._counter_boxes: list[
+            tuple[int, int, int, int]
+        ] = []  # edge strips seen shrinking or filling
 
     def _counter_regions(self) -> list[str]:
         """Small regions that changed on each of the last 3+ actions: probably a counter or timer."""
@@ -615,6 +619,9 @@ class BaselineAgentCore:
         height = len(after)
         width = len(after[0]) if height else 0
         boxes = change_boxes(before, after) if raw > 0 else []
+        for strip in counter_strips(before, after) if raw > 0 else []:
+            if strip not in self._counter_boxes and len(self._counter_boxes) < 6:
+                self._counter_boxes.append(strip)
         flagged = {k for k, streak in self._box_streaks.items() if streak >= 3}
         keys = [region_key(box, width, height) for box in boxes]
         small = {
@@ -783,7 +790,7 @@ class BaselineAgentCore:
 
         plan_text = self._plan_results()
         ledger_text = self._ledger_block()
-        objects_text = describe_objects(observation.grid)
+        objects_text = describe_objects(observation.grid, counters=self._counter_boxes)
         text = build(plan_text, history, ledger_text, objects_text)
         budget = self._prompt_chars
         if budget > 0 and len(text) > budget:
@@ -825,12 +832,14 @@ class BaselineAgentCore:
                     return text
         shown = min(len(segment(observation.grid)), MAX_OBJECTS)
         low, high = 0, shown
-        best = describe_objects(observation.grid, limit=0)
+        best = describe_objects(observation.grid, limit=0, counters=self._counter_boxes)
         while (
             low <= high
         ):  # the longest object list that fits (length grows with the limit)
             mid = (low + high) // 2
-            candidate = describe_objects(observation.grid, limit=mid)
+            candidate = describe_objects(
+                observation.grid, limit=mid, counters=self._counter_boxes
+            )
             if len(build("", None, "", candidate)) <= budget:
                 best, low = candidate, mid + 1
             else:
@@ -1214,7 +1223,12 @@ class BaselineAgentCore:
         tries, changed = self._moves.get(label, (0, 0))
         return bool(decision.data) and tries >= DEAD_CLICK_TRIES and changed == 0
 
-    def _dead_moves(self, observation: Observation) -> list[str]:
+    def dead_moves(self, observation: Observation) -> list[str]:
+        """Every move known to do nothing on this board (used by the fallback chooser)."""
+
+        return self._dead_moves(observation, limit=None)
+
+    def _dead_moves(self, observation: Observation, limit: int | None = 8) -> list[str]:
         h = hash(observation.grid)
         labels = {
             k for (k, g), n in self._dead.items() if g == h and n >= DEAD_ON_SAME_BOARD
@@ -1224,7 +1238,7 @@ class BaselineAgentCore:
             for k, (tries, changed) in self._moves.items()
             if " at x=" in k and tries >= DEAD_CLICK_TRIES and changed == 0
         }
-        return sorted(labels)[:8]
+        return sorted(labels)[:limit]
 
     def _untried_line(self, observation: Observation) -> str:
         if not self._effects:

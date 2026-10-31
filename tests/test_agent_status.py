@@ -74,3 +74,27 @@ def test_parallel_tool_calls_use_only_the_first_action_call() -> None:
     assert core._ignored_calls == 1
     core.choose(board(5))
     assert "only the first action-bearing call was used" in client.texts[1]
+
+
+def test_edge_strip_is_labelled_counter_on_first_change_and_dead_moves_public() -> None:
+    def strip(width: int) -> Observation:
+        rows = [[0] * 24 for _ in range(14)]
+        rows[5][3] = rows[5][4] = 5
+        for x in range(width):
+            rows[13][x] = 7  # bar on the bottom edge, shrinking from the right
+        return Observation(
+            game_id="g",
+            grid=tuple(map(tuple, rows)),
+            state="NOT_FINISHED",
+            levels_completed=0,
+            win_levels=1,
+            available_actions=(1, 2, 3, 4),
+        )
+
+    client = Parallel(("action([1])",), ("action([1])",), ("action([1])",))
+    core = BaselineAgentCore(client)
+    core.choose(strip(12))
+    core.choose(strip(11))  # first shrink of the bar
+    core.choose(strip(10))
+    assert "counter, not a goal" in client.texts[2]
+    assert core.dead_moves(strip(10)) == []
