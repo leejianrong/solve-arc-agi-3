@@ -137,3 +137,30 @@ def test_level_cleared_note_appears_once_and_is_traced() -> None:
     core2.choose(toy(0, 0))
     core2.choose(toy(1, 1))
     assert "cleared" in core2.last_turn
+
+
+def _hint_text(mode: str) -> str:
+    client = Scripted((4, 32), (10, 10), (10, 10))
+    core = BaselineAgentCore(client, click_hints=mode)
+    for presses in (0, 1, 1):
+        core.choose(toy(presses))
+    return client.texts[2]
+
+
+def test_click_hint_modes() -> None:
+    both = ("Clicks that changed", "Objects not clicked yet")
+    for mode, want in (
+        ("auto", (True, False)),
+        ("wins", (True, False)),
+        ("sweep", (False, True)),
+        ("none", (False, False)),
+    ):
+        text = _hint_text(mode)
+        assert tuple(s in text for s in both) == want, mode
+
+
+def test_unknown_click_hint_mode_is_rejected() -> None:
+    import pytest
+
+    with pytest.raises(ValueError):
+        BaselineAgentCore(Scripted(), click_hints="bogus")

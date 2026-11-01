@@ -509,6 +509,12 @@ def _tool_calls_from_python(code: str) -> list[tuple[str, list[object]]]:
 
 
 HISTORY_LINES = 40
+CLICK_HINTS = (
+    "auto",
+    "wins",
+    "sweep",
+    "none",
+)  # auto: wins, else a sweep of unclicked objects
 _ACTION_LABELS = {
     "RESET": "RESET",
     **{f"ACTION{i}": f"ACTION{i}" for i in range(1, 8)},
@@ -537,12 +543,16 @@ class BaselineAgentCore:
         tools: bool = False,
         world_model: bool = False,
         nav: bool = False,
+        click_hints: str = "auto",
     ) -> None:
+        if click_hints not in CLICK_HINTS:
+            raise ValueError(f"click_hints must be one of {CLICK_HINTS}")
         if world_model and not tools:
             raise ValueError("the world_model switch requires the tools switch")
         self._prompt_chars = prompt_chars
         self._events = events
         self._nav = nav
+        self._click_hints = click_hints
         self._graph = StateGraph()
         self._board_window: list[int] = []
         self._motion_hist: list[tuple[Any, str, Any]] = []
@@ -1434,7 +1444,8 @@ class BaselineAgentCore:
             if a != 0 and f"ACTION{a}" not in self._effects
         ]
         text = f"Not tried yet in this game: {', '.join(untried)}.\n" if untried else ""
-        wins = self._effective_clicks()
+        hints = self._click_hints
+        wins = self._effective_clicks() if hints in ("auto", "wins") else []
         live_wins = [
             w
             for w in wins
@@ -1453,7 +1464,12 @@ class BaselineAgentCore:
                 f"Clicks that changed the board: {listed} (repeat or vary these).\n"
                 + text
             )
-        if 6 in observation.available_actions and self._clicks and not live_wins:
+        if (
+            6 in observation.available_actions
+            and self._clicks
+            and hints in ("auto", "sweep")
+            and (hints == "sweep" or not live_wins)
+        ):
             fresh = untried_clicks(observation.grid, self._clicks, limit=8)
             if fresh:
                 listed = "; ".join(f"colour {r.color} at {r.center}" for r in fresh)
