@@ -254,6 +254,7 @@ def test_switches_come_from_the_environment_and_default_to_off() -> None:
         "tools": False,
         "world_model": False,
         "nav": False,
+        "click_hints": "auto",
     }
     assert agent_switches(
         {
@@ -262,6 +263,7 @@ def test_switches_come_from_the_environment_and_default_to_off() -> None:
             "ARC3_TOOLS": "1",
             "ARC3_WORLD_MODEL": "1",
             "ARC3_NAV": "1",
+            "ARC3_CLICK_HINTS": "sweep",
         }
     ) == {
         "prompt_chars": 4000,
@@ -269,6 +271,7 @@ def test_switches_come_from_the_environment_and_default_to_off() -> None:
         "tools": True,
         "world_model": True,
         "nav": True,
+        "click_hints": "sweep",
     }
     assert (
         agent_switches({"ARC3_PROMPT_CHARS": "", "ARC3_EVENTS": "0"})["events"] is False
