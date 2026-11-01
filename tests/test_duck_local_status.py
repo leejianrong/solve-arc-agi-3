@@ -76,7 +76,7 @@ def test_level_change_resets_mover() -> None:
     t.update(board(2, 2), "RIGHT", board(2, 3), 0)
     t.update(board(2, 3), "DOWN", board(0, 0), 1)
     text = t.render()
-    assert "cleared the level" in text and "No object has been seen moving" in text
+    assert "cleared the level" in text and "New level: the controlled object" in text
 
 
 def test_empty_before_first_action() -> None:
@@ -145,3 +145,47 @@ def test_hook_applies_once_and_flag_off_is_identical(
     base = run(SRC, None)
     assert run(patched, None) == base == run(patched, "0")
     assert run(patched, "1") == base  # on, but no actions yet: still nothing added
+
+
+def two_objects(r: int, c: int, dot_c: int) -> list[str]:
+    """Background B, a 2x2 red object at (r, c) and a single yellow cell on row 6 at dot_c."""
+    g = [list(row) for row in board(r, c, bar=0)]
+    g[6][dot_c] = "Y"
+    return ["".join(row) for row in g]
+
+
+def test_keeps_following_the_known_mover_over_a_bigger_jump() -> None:
+    t = sh.StatusTracker()
+    t.update(board(2, 2, 0), "RIGHT", board(2, 3, 0), 0)  # the red 2x2 is the mover
+    t.update(
+        two_objects(2, 3, 0), "RIGHT", two_objects(2, 4, 4), 0
+    )  # a dot jumps 4, red moves 1
+    assert "colour R, size 4" in t.render(["RIGHT"])
+    assert t.mover is not None and t.mover[1] == 4
+
+
+def test_new_level_clears_click_memory_and_says_so() -> None:
+    t = sh.StatusTracker()
+    t.update(board(2, 2), "MOUSE(1,1)", board(2, 3), 0)
+    assert "MOUSE(1,1)" in t.render(["MOUSE"])
+    t.update(board(2, 3), "MOUSE(1,1)", board(5, 5), 1)  # level counter went up
+    text = t.render(["MOUSE"])
+    assert "Clicks that changed the board" not in text
+    t.update(board(5, 5), "UP", board(5, 5), 1)
+    assert "New level" not in t.render(
+        ["UP"]
+    ) and "No object has been seen" in t.render(["UP"])
+    t2 = sh.StatusTracker()
+    t2.update(board(2, 2), "UP", board(2, 2), 0)
+    t2.update(board(2, 2), "UP", board(4, 4), 1)
+    assert "New level: the controlled object has not been located" in t2.render(["UP"])
+
+
+def test_click_only_game_has_no_mover_line() -> None:
+    t = sh.StatusTracker()
+    t.update(board(2, 2), "MOUSE(1,1)", board(2, 3), 0)
+    text = t.render(["MOUSE", "RESET"])
+    assert "Controlled object" not in text and "No object has been seen" not in text
+    assert "MOUSE(1,1) changed the board" in text
+    t.update(board(2, 3), "MOUSE(7,7)", board(2, 3), 0)
+    assert "MOUSE(7,7) changed nothing" in t.render(["MOUSE"])
