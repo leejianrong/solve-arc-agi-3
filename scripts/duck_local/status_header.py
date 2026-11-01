@@ -149,7 +149,9 @@ class StatusTracker:
             Counter()
         )  # (action, hash of the board it did nothing on)
         self.mover: Region | None = None
+        self.new_level = False  # no mover known because the level just changed
         self.last = ""
+        self.last_changed = False
         self.noop_streak = 0
         self.level: int | None = None
         self.board: Grid = ()
@@ -173,17 +175,25 @@ class StatusTracker:
         self.level = levels if levels is not None else self.level
         self.board = a
         if new_level:
-            self.mover, self.noop_streak = None, 0
+            self.mover, self.noop_streak, self.new_level = None, 0, True
+            self.clicks.clear()
+            self.click_wins.clear()
+            self.dead.clear()
             self.boards.clear()
             self.last = f"{label} cleared the level"
             return
+        self.new_level = False
         shaped = same_shape(b, a)
         boxes = change_boxes(b, a) if shaped else []
         h, w = len(a), len(a[0]) if a else 0
         changed = (not shaped) or any(not thin_edge_strip(x, h, w) for x in boxes)
         pairs = object_motion(b, a) if shaped and boxes else []
         if pairs:
-            (_, _, r0, c0, _, _), nxt = pairs[0]
+            # keep following the known mover; else the biggest object that moved, not the longest jump
+            known = [p for p in pairs if self.mover and p[1][:2] == self.mover[:2]]
+            (_, _, r0, c0, _, _), nxt = (
+                known[0] if known else max(pairs, key=lambda p: p[1][1])
+            )
             self.mover = nxt
             self.last = f"{label} MOVED the object by (row {nxt[2] - r0:+d}, col {nxt[3] - c0:+d})"
         elif not changed:
@@ -191,6 +201,7 @@ class StatusTracker:
             self.last = f"{label} was BLOCKED ({why}); the object did not move"
         else:
             self.last = f"{label} changed the board but no object moved"
+        self.last_changed = changed
         stats = self.effects.setdefault(name, [0, 0])
         stats[0] += 1
         stats[1] += changed
@@ -221,13 +232,26 @@ class StatusTracker:
         if not self.last:
             return ""
         m = self.mover
+        click_only = bool(valid_actions) and all(
+            action_label(v).startswith("MOUSE") or action_label(v) in ("RESET", "UNDO")
+            for v in valid_actions or []
+        )
+        last = self.last
+        if click_only and not last.endswith("cleared the level"):
+            last = f"{last.split(' ')[0]} {'changed the board' if self.last_changed else 'changed nothing'}"
         where = (
-            f"Controlled object (colour {m[0]}, size {m[1]}) is at rows {m[2]}-{m[4]} cols {m[3]}-{m[5]}, "
+            ""
+            if click_only
+            else f"Controlled object (colour {m[0]}, size {m[1]}) is at rows {m[2]}-{m[4]} cols {m[3]}-{m[5]}, "
             f"centre ({(m[2] + m[4]) // 2},{(m[3] + m[5]) // 2}). "
             if m
-            else "No object has been seen moving yet. "
+            else (
+                "New level: the controlled object has not been located yet. "
+                if self.new_level
+                else "No object has been seen moving yet. "
+            )
         )
-        lines = [f"STATUS: {where}Last move: {self.last}."]
+        lines = [f"STATUS: {where}Last move: {last}."]
         untried = [
             n
             for n in dict.fromkeys(action_label(v) for v in valid_actions or [])
