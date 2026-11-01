@@ -24,6 +24,7 @@ from pathlib import Path
 
 from arc_agi import Arcade, OperationMode
 
+from solve_arc_agi_3.agent import CLICK_HINTS
 from solve_arc_agi_3.baseline_config import InferenceConfig
 from solve_arc_agi_3.inference import OpenAICompatibleClient
 from solve_arc_agi_3.kaggle_agent import LoggingClient, RunLimits, make_agent_class
@@ -209,6 +210,12 @@ def main() -> None:
         help="state graph and reachability lines in the status header (ARC3_NAV)",
     )
     ap.add_argument(
+        "--click-hints",
+        default="auto",
+        choices=CLICK_HINTS,
+        help="click guidance in the status header: wins list, sweep of unclicked objects, none, or auto",
+    )
+    ap.add_argument(
         "--ledger",
         action="store_true",
         help="put the hypothesis ledger block in the prompt",
@@ -252,6 +259,7 @@ def main() -> None:
         trace=trace,
         use_ledger=args.ledger,
         nav=args.nav,
+        click_hints=args.click_hints,
     )
 
     arc = Arcade(
