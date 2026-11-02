@@ -21,10 +21,11 @@ Sibling repos: `../play-arc-agi-3` (human play app, local games in `environment_
    always `watch --max-usd N` (pod-side `lab_obs.sh` + driver `runpod_watch.py`: phase deadlines, fatal lines, evidence shipped before delete).
    RunPod pods on driver 570 cannot run our pinned vLLM wheels (PTX error); prefer Kaggle dev kernels.
 3. **Count from recordings or the trace, not log lines.** Kaggle logs print every agent line twice.
-4. **Submissions.** One per day, deadline 2026-11-02 23:59. Never submit without the user's go-ahead. Facts,
+4. **Submissions.** One per day; the competition closed 2026-11-02 23:59 UTC (final: 57887193, 27.82). Never submit without the user's go-ahead. Facts,
    pins and the dry-run history: `docs/baselines/kaggle-submission-checklist.md`.
 5. **A Kaggle dry run does not test the submission path.** Dry runs use `dry_runner.py` and offline games; a
-   rerun uses the official starter and the gateway, and both our submissions scored 0.00 with no logs to read.
+   rerun uses the official starter and the gateway, and both our own-code submissions scored 0.00 with no logs to read
+   (copying Franzen's notebook scored 25.22, then 27.82 with our switches).
    Kaggle also mounts inputs in two layouts (nested under `competitions/`, or flat): never hard-code a mount path.
 6. **The score rewards few actions, not speed.** Level score = 100 x (baseline/actions)^2, level i is weighted
    i. Wasted moves on level 1 cost points; later levels matter most.
