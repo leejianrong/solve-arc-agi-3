@@ -113,3 +113,16 @@ Kernel `arc3-duck-qwen-dev-think`, thinking on, 6,144 tokens, 900 s timeout, fir
 608 recorded actions, 5 fallbacks, 0 levels, score 0.0, 550 model calls at a mean of 1,072 completion tokens and 38.6 s,
 about 1.1 moves per call. Thinking off on the same 8 games (dry run 5) took 1,275 actions in about 29 minutes, also 0 levels.
 No evidence that thinking helps within this budget and it costs about three times the time per action: thinking stays off.
+
+## Final results (2026-11-02)
+
+| Ref | Date | Notebook | Score |
+|---|---|---|---|
+| 57788190 | 2026-10-30 | `arc3-duck-qwen` v4, own clean-room agent (c16d400) | 0.00 |
+| 57844835 | 2026-10-31 | own v6 agent (30e98a8) | 0.00 |
+| 57859539 | 2026-11-01 | `arc3-franzen-copy` v3, Franzen Milestone 2 unchanged | 25.22 |
+| 57887193 | 2026-11-02 | `arc3-franzen-copy` v4: v3 + `COMP_DIR` mount fallback + `ARC3_AUTO_FRAME_DIFF=1`, `ARC3_LEVEL_INVENTORY=1`, `ARC3_REPORT_GAMEPLAY_CHANGED=1` | **27.82** |
+
+v4 was chosen on 25 public games (one run each): 50.63 vs 46.24 for the base, 11 wins, 7 losses, 7 ties, difference under
+one standard error. The leaderboard result is consistent with a small gain but cannot separate it from noise.
+Lesson: the public strong notebook beat our own agent by 25 points; our agent never cleared a level on a rerun.

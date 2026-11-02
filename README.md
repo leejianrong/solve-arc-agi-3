@@ -12,11 +12,14 @@ flowchart LR
     A --> T[Step trace\nJSONL, replay viewer]
 ```
 
-## Status (2026-11-01)
+## Status (2026-11-02, final)
 
-- **Scores:** two Kaggle submissions, both **0.00** (refs 57788190, 57844835). Offline dry runs on 12 public games
-  cleared 0 to 3 levels. We have never seen the logs of a competition rerun, so the cause is unknown
-  ([`docs/baselines/baseline-report.md`](docs/baselines/baseline-report.md)).
+- **Scores:** four Kaggle submissions. Our own code scored **0.00** twice (57788190, 57844835); we never saw the logs
+  of a competition rerun, so the cause is unknown ([`docs/baselines/baseline-report.md`](docs/baselines/baseline-report.md)).
+  Franzen's Milestone 2 notebook copied unchanged (v3) scored **25.22** (57859539). The final submission, 57887193, is
+  that notebook plus a mount-path fallback and our `ARC3_AUTO_FRAME_DIFF`, `ARC3_LEVEL_INVENTORY` and
+  `ARC3_REPORT_GAMEPLAY_CHANGED` switches (v4): **27.82**, our best. The +2.6 over v3 is within run-to-run noise
+  (25 public games, one run each: 50.6 vs 46.2, SE about 5.6).
 - **What works:** the pinned offline stack, the agent loop, per-step traces with a browser replay viewer, a free
   scripted client, and Haiku-via-[semula](https://github.com/leejianrong/semula) players for behaviour tests.
 - **What does not:** the agent plays movement games close to random and rarely finds a goal. The hypothesis
